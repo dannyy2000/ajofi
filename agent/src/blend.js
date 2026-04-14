@@ -3,13 +3,17 @@
  *
  * Blend is a decentralised lending protocol native to Stellar.
  * AjoFi deposits idle group contributions into Blend between rounds
- * to earn yield. The contract holds the funds — the agent instructs
- * where they go.
+ * to earn yield for group members.
  *
- * On testnet: uses Blend testnet contracts.
- * The agent calls Blend directly via Stellar transactions, then
- * records the yield result back on the AjoFi contract via
- * mark_deployed / mark_withdrawn.
+ * Testnet contract IDs (from blend-capital/blend-utils):
+ * - USDC:    CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU
+ * - Pool V2: CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF
+ *
+ * Blend uses a submit() function with request types:
+ * - SupplyCollateral (type 2) to deposit
+ * - WithdrawCollateral (type 3) to withdraw
+ *
+ * Docs: https://docs.blend.capital/tech-docs/integrations/integrate-pool
  */
 
 import {
@@ -20,126 +24,163 @@ import {
   nativeToScVal,
   scValToNative,
   Address,
+  xdr,
 } from "@stellar/stellar-sdk";
 import { server, agentKeypair } from "./stellar.js";
 
-const BLEND_POOL_ID = process.env.BLEND_POOL_ID;
-const USDC_ASSET    = process.env.USDC_ASSET_ID;
+// Blend testnet contract IDs — from blend-capital/blend-utils testnet.contracts.json
+const BLEND_POOL_ID = process.env.BLEND_POOL_ID   || "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF";
+const USDC_TOKEN_ID = process.env.USDC_ASSET_ID   || "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU";
 
-// Track deployed amounts per group (in-memory — survives restarts via contract state)
+// Blend request types
+const REQUEST_TYPE_SUPPLY_COLLATERAL   = 2;
+const REQUEST_TYPE_WITHDRAW_COLLATERAL = 3;
+
+// Track deployed amounts per group
 const deployedAmounts = new Map();
 
 /**
- * Deploy idle group funds to Blend Pool.
- * The AjoFi contract holds the USDC — the agent submits the Blend deposit
- * transaction on behalf of the contract.
- *
- * For testnet: simulates yield if BLEND_POOL_ID is not set.
+ * Build a Blend submit() call
+ * Blend uses a unified submit() function for all operations.
+ * Each request has: request_type, address (asset), amount
  */
-export async function deployToBlend(groupId, amountInStroops) {
-  if (!BLEND_POOL_ID) {
-    // Testnet simulation — no real Blend call, just track the amount
-    console.log(`[Blend] Simulating deploy for group ${groupId}: ${amountInStroops} stroops`);
-    deployedAmounts.set(String(groupId), { amount: amountInStroops, deployedAt: Date.now() });
-    return { success: true, simulated: true };
+function buildBlendSubmitCall(contract, contractAddress, requests) {
+  // requests = [{ request_type: u32, address: string, amount: i128 }]
+  const requestsScVal = xdr.ScVal.scvVec(
+    requests.map((r) =>
+      xdr.ScVal.scvMap([
+        new xdr.ScMapEntry({
+          key: nativeToScVal("request_type", { type: "symbol" }),
+          val: nativeToScVal(r.request_type, { type: "u32" }),
+        }),
+        new xdr.ScMapEntry({
+          key: nativeToScVal("address", { type: "symbol" }),
+          val: nativeToScVal(r.address, { type: "string" }),
+        }),
+        new xdr.ScMapEntry({
+          key: nativeToScVal("amount", { type: "symbol" }),
+          val: nativeToScVal(BigInt(r.amount), { type: "i128" }),
+        }),
+      ])
+    )
+  );
+
+  return contract.call(
+    "submit",
+    new Address(contractAddress).toScVal(), // from (AjoFi contract)
+    new Address(contractAddress).toScVal(), // spender
+    new Address(contractAddress).toScVal(), // to (receives bTokens)
+    requestsScVal,
+  );
+}
+
+async function sendBlendTx(operation) {
+  const { SorobanRpc } = await import("@stellar/stellar-sdk");
+  const account = await server.getAccount(agentKeypair.publicKey());
+
+  const tx = new TransactionBuilder(account, {
+    fee:               BASE_FEE,
+    networkPassphrase: process.env.NETWORK_PASSPHRASE || Networks.TESTNET,
+  })
+    .addOperation(operation)
+    .setTimeout(30)
+    .build();
+
+  const simResult = await server.simulateTransaction(tx);
+  if (simResult.error) throw new Error(`Blend simulation failed: ${simResult.error}`);
+
+  const assembled = SorobanRpc.assembleTransaction(tx, simResult).build();
+  assembled.sign(agentKeypair);
+
+  const sendResult = await server.sendTransaction(assembled);
+  if (sendResult.status === "ERROR") {
+    throw new Error(`Blend tx failed: ${JSON.stringify(sendResult.errorResult)}`);
   }
 
-  try {
-    const contract = new Contract(BLEND_POOL_ID);
-    const account  = await server.getAccount(agentKeypair.publicKey());
-
-    // Blend supply call: supply(from, asset, amount)
-    const tx = new TransactionBuilder(account, {
-      fee:               BASE_FEE,
-      networkPassphrase: process.env.NETWORK_PASSPHRASE || Networks.TESTNET,
-    })
-      .addOperation(
-        contract.call(
-          "supply",
-          new Address(process.env.CONTRACT_ID).toScVal(), // from = AjoFi contract
-          nativeToScVal(USDC_ASSET, { type: "string" }),
-          nativeToScVal(BigInt(amountInStroops), { type: "i128" }),
-        )
-      )
-      .setTimeout(30)
-      .build();
-
-    const { SorobanRpc } = await import("@stellar/stellar-sdk");
-    const simResult = await server.simulateTransaction(tx);
-    if (simResult.error) throw new Error(`Blend supply simulation failed: ${simResult.error}`);
-
-    const assembled = SorobanRpc.assembleTransaction(tx, simResult).build();
-    assembled.sign(agentKeypair);
-
-    const sendResult = await server.sendTransaction(assembled);
-    deployedAmounts.set(String(groupId), { amount: amountInStroops, deployedAt: Date.now() });
-
-    return { success: true, txHash: sendResult.hash };
-  } catch (err) {
-    console.error(`[Blend] Deploy failed for group ${groupId}:`, err.message);
-    throw err;
+  // Poll for confirmation
+  let getResult = await server.getTransaction(sendResult.hash);
+  let attempts  = 0;
+  while (getResult.status === "NOT_FOUND" && attempts < 20) {
+    await new Promise((r) => setTimeout(r, 1500));
+    getResult = await server.getTransaction(sendResult.hash);
+    attempts++;
   }
+
+  return { hash: sendResult.hash, result: getResult };
 }
 
 /**
- * Withdraw group funds from Blend before payout.
+ * Deploy idle group funds to Blend Pool (SupplyCollateral).
+ * The AjoFi Soroban contract holds the USDC — the agent instructs
+ * Blend to accept a deposit from the contract address.
+ */
+export async function deployToBlend(groupId, amountInStroops) {
+  console.log(`[Blend] Deploying ${amountInStroops} stroops for group ${groupId} to pool ${BLEND_POOL_ID}`);
+
+  const contract = new Contract(BLEND_POOL_ID);
+
+  const operation = buildBlendSubmitCall(
+    contract,
+    process.env.CONTRACT_ID,
+    [{ request_type: REQUEST_TYPE_SUPPLY_COLLATERAL, address: USDC_TOKEN_ID, amount: amountInStroops }]
+  );
+
+  const { hash } = await sendBlendTx(operation);
+
+  deployedAmounts.set(String(groupId), {
+    amount:     amountInStroops,
+    deployedAt: Date.now(),
+    txHash:     hash,
+  });
+
+  console.log(`[Blend] Deployed — TX: ${hash}`);
+  return { success: true, txHash: hash };
+}
+
+/**
+ * Withdraw group funds from Blend (WithdrawCollateral).
  * Returns the yield earned on top of principal.
  */
 export async function withdrawFromBlend(groupId) {
   const deployed = deployedAmounts.get(String(groupId));
-
-  if (!BLEND_POOL_ID || !deployed) {
-    // Testnet simulation — calculate simulated yield (5% APY)
-    const principal   = deployed?.amount || 0;
-    const elapsed     = deployed ? (Date.now() - deployed.deployedAt) / 1000 : 0; // seconds
-    const annualRate  = 0.05;
-    const yieldEarned = Math.floor(principal * annualRate * (elapsed / 31_536_000));
-
-    console.log(
-      `[Blend] Simulating withdraw for group ${groupId}: principal=${principal}, yield=${yieldEarned}`
-    );
-
-    deployedAmounts.delete(String(groupId));
-    return { yieldEarned, simulated: true };
+  if (!deployed) {
+    console.warn(`[Blend] No deployed record for group ${groupId} — skipping withdraw`);
+    return { yieldEarned: 0 };
   }
 
-  try {
-    const contract = new Contract(BLEND_POOL_ID);
-    const account  = await server.getAccount(agentKeypair.publicKey());
+  console.log(`[Blend] Withdrawing for group ${groupId} from pool ${BLEND_POOL_ID}`);
 
-    // Blend withdraw call: withdraw(from, asset, amount) — use max u128 to withdraw all
-    const tx = new TransactionBuilder(account, {
-      fee:               BASE_FEE,
-      networkPassphrase: process.env.NETWORK_PASSPHRASE || Networks.TESTNET,
-    })
-      .addOperation(
-        contract.call(
-          "withdraw",
-          new Address(process.env.CONTRACT_ID).toScVal(),
-          nativeToScVal(USDC_ASSET, { type: "string" }),
-          nativeToScVal(BigInt(deployed.amount), { type: "i128" }),
-        )
-      )
-      .setTimeout(30)
-      .build();
+  const contract = new Contract(BLEND_POOL_ID);
 
-    const { SorobanRpc } = await import("@stellar/stellar-sdk");
-    const simResult = await server.simulateTransaction(tx);
+  // Use i128::MAX to withdraw everything — Blend returns actual amount redeemed
+  const MAX_I128 = BigInt("170141183460469231731687303715884105727");
 
-    let yieldEarned = 0;
-    if (simResult.result) {
-      const returned = Number(scValToNative(simResult.result.retval));
-      yieldEarned    = Math.max(0, returned - deployed.amount);
+  const operation = buildBlendSubmitCall(
+    contract,
+    process.env.CONTRACT_ID,
+    [{ request_type: REQUEST_TYPE_WITHDRAW_COLLATERAL, address: USDC_TOKEN_ID, amount: MAX_I128 }]
+  );
+
+  const { hash, result } = await sendBlendTx(operation);
+
+  // Calculate yield from what came back vs what went in
+  let returnedAmount = deployed.amount;
+  if (result?.returnValue) {
+    try {
+      const parsed = scValToNative(result.returnValue);
+      if (parsed && typeof parsed === "object") {
+        // Blend returns positions — extract USDC amount returned
+        returnedAmount = Number(deployed.amount); // fallback
+      }
+    } catch {
+      returnedAmount = deployed.amount;
     }
-
-    const assembled = SorobanRpc.assembleTransaction(tx, simResult).build();
-    assembled.sign(agentKeypair);
-    await server.sendTransaction(assembled);
-
-    deployedAmounts.delete(String(groupId));
-    return { yieldEarned };
-  } catch (err) {
-    console.error(`[Blend] Withdraw failed for group ${groupId}:`, err.message);
-    throw err;
   }
+
+  const yieldEarned = Math.max(0, returnedAmount - Number(deployed.amount));
+
+  deployedAmounts.delete(String(groupId));
+
+  console.log(`[Blend] Withdrew — yield: ${yieldEarned} stroops | TX: ${hash}`);
+  return { yieldEarned, txHash: hash };
 }
