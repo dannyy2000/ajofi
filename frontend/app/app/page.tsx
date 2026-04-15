@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, Wallet, ArrowLeft, Check } from "lucide-react";
+import { StellarWalletsKit, Networks } from "@creit.tech/stellar-wallets-kit";
+import { defaultModules } from "@creit.tech/stellar-wallets-kit/modules/utils";
 
 const COUNTRIES = [
   { code: "NG", flag: "🇳🇬", name: "Nigeria", currency: "NGN", symbol: "₦", rate: 1580, desc: "Deposit & withdraw in Naira" },
@@ -19,27 +21,31 @@ export default function AppPage() {
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
   const [publicKey, setPublicKey] = useState<string | null>(null);
+  const [swkReady, setSwkReady] = useState(false);
+
+  // Initialise Stellar Wallets Kit once on the client
+  useEffect(() => {
+    StellarWalletsKit.init({
+      network: Networks.TESTNET,
+      modules: defaultModules(),
+    });
+    setSwkReady(true);
+  }, []);
 
   async function connectWallet() {
-    if (!selected) return;
+    if (!selected || !swkReady) return;
     setConnecting(true);
     try {
-      // @ts-ignore
-      if (typeof window !== "undefined" && window.freighter) {
-        // @ts-ignore
-        await window.freighter.setAllowed();
-        // @ts-ignore
-        const { publicKey: pk } = await window.freighter.getPublicKey();
-        setPublicKey(pk);
-      } else {
-        const mockKey = "GBG4EEG3R6NAUD5EPSXSOYZ6R4G67ORKIRIOP4AQWEEXBZO6BC56PUKU";
-        setPublicKey(mockKey);
-      }
+      // Opens the multi-wallet picker modal (Freighter, LOBSTR, xBull, Albedo…)
+      const { address } = await StellarWalletsKit.authModal();
+      setPublicKey(address);
+      localStorage.setItem("ajofi_pubkey", address);
       localStorage.setItem("ajofi_country", selected);
       setConnected(true);
-      setTimeout(() => router.push("/intent"), 1000);
+      setTimeout(() => router.push("/intent"), 1200);
     } catch (err) {
-      console.error(err);
+      // User closed the modal or wallet rejected — just reset
+      console.error("[SWK] wallet connect cancelled:", err);
     } finally {
       setConnecting(false);
     }
@@ -206,26 +212,28 @@ export default function AppPage() {
                     style={{ background: "#FFFBEB", borderColor: "#FDE68A" }}>
                     <span className="text-base mt-0.5">⚡</span>
                     <p className="text-sm" style={{ color: "#92400E" }}>
-                      You need a <strong>Freighter wallet</strong> to continue.{" "}
+                      You need a <strong>Stellar wallet</strong> to continue. We support{" "}
+                      <strong>Freighter</strong>, <strong>LOBSTR</strong>, <strong>xBull</strong>, and more.{" "}
                       <a href="https://freighter.app" target="_blank" rel="noreferrer"
                         className="underline font-semibold" style={{ color: "#4338CA" }}>
-                        Install it here
+                        Get Freighter
                       </a>
                       {" "}— it takes 2 minutes.
                     </p>
                   </div>
                 )}
 
-                <button onClick={connectWallet} disabled={!selected || connecting}
+                <button
+                  onClick={connectWallet}
+                  disabled={!selected || connecting || !swkReady}
                   className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl font-black text-base transition-all"
                   style={{
-                    background: selected
-                      ? "linear-gradient(135deg, #4338CA, #7C3AED)"
+                    background: selected && swkReady
+                      ? "linear-gradient(135deg, #5B21B6, #7C3AED)"
                       : "#E2E8F0",
-                    color: selected ? "#FFFFFF" : "#94A3B8",
-                    cursor: selected ? "pointer" : "not-allowed",
-                    boxShadow: selected ? "0 8px 24px rgba(67,56,202,0.3)" : "none",
-                    transform: selected ? "none" : "none",
+                    color: selected && swkReady ? "#FFFFFF" : "#94A3B8",
+                    cursor: selected && swkReady ? "pointer" : "not-allowed",
+                    boxShadow: selected && swkReady ? "0 8px 24px rgba(91,33,182,0.3)" : "none",
                   }}>
                   {connecting ? (
                     <>
@@ -235,7 +243,7 @@ export default function AppPage() {
                   ) : (
                     <>
                       <Wallet size={18} />
-                      Connect Freighter Wallet
+                      Connect Stellar Wallet
                       <ArrowRight size={18} />
                     </>
                   )}
