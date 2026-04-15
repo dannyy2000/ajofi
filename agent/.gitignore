@@ -1,3 +1,7 @@
 node_modules/
 .env
 reasoning.log.json
+blend-contracts/
+blend-docs/
+blend-sdk-js/
+blend-utils/
