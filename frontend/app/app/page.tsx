@@ -1,11 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, Wallet, ArrowLeft, Check } from "lucide-react";
-import { StellarWalletsKit, Networks } from "@creit.tech/stellar-wallets-kit";
-import { defaultModules } from "@creit.tech/stellar-wallets-kit/modules/utils";
 
 const COUNTRIES = [
   { code: "NG", flag: "🇳🇬", name: "Nigeria", currency: "NGN", symbol: "₦", rate: 1580, desc: "Deposit & withdraw in Naira" },
@@ -22,24 +20,39 @@ export default function AppPage() {
   const [connected, setConnected] = useState(false);
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [swkReady, setSwkReady] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const authModalRef = useRef<(() => Promise<{ address: string }>) | null>(null);
 
-  // Initialise Stellar Wallets Kit once on the client
+  // Dynamically import SWK on the client only — avoids SSR issues with rxjs
   useEffect(() => {
-    StellarWalletsKit.init({
-      network: Networks.TESTNET,
-      modules: defaultModules(),
-    });
-    setSwkReady(true);
+    (async () => {
+      const { StellarWalletsKit, Networks } = await import("@creit.tech/stellar-wallets-kit");
+      const { FreighterModule }             = await import("@creit.tech/stellar-wallets-kit/modules/freighter");
+      const { LobstrModule }                = await import("@creit.tech/stellar-wallets-kit/modules/lobstr");
+      const { AlbedoModule }                = await import("@creit.tech/stellar-wallets-kit/modules/albedo");
+
+      StellarWalletsKit.init({
+        network: Networks.TESTNET,
+        modules: [
+          new FreighterModule(),
+          new LobstrModule(),
+          new AlbedoModule(),
+        ],
+      });
+
+      authModalRef.current = () => StellarWalletsKit.authModal();
+      setSwkReady(true);
+    })();
   }, []);
 
   async function connectWallet() {
-    if (!selected || !swkReady) return;
+    if (!selected || !swkReady || !authModalRef.current) return;
     setConnecting(true);
     try {
-      // Opens the multi-wallet picker modal (Freighter, LOBSTR, xBull, Albedo…)
-      const { address } = await StellarWalletsKit.authModal();
+      // Opens the multi-wallet picker modal (Freighter, LOBSTR, Albedo, xBull…)
+      const { address } = await authModalRef.current();
       setPublicKey(address);
-      localStorage.setItem("ajofi_pubkey", address);
+      localStorage.setItem("ajofi_wallet", address);
       localStorage.setItem("ajofi_country", selected);
       setConnected(true);
       setTimeout(() => router.push("/intent"), 1200);
@@ -213,7 +226,7 @@ export default function AppPage() {
                     <span className="text-base mt-0.5">⚡</span>
                     <p className="text-sm" style={{ color: "#92400E" }}>
                       You need a <strong>Stellar wallet</strong> to continue. We support{" "}
-                      <strong>Freighter</strong>, <strong>LOBSTR</strong>, <strong>xBull</strong>, and more.{" "}
+                      <strong>Freighter</strong>, <strong>LOBSTR</strong>, <strong>Albedo</strong>, and more.{" "}
                       <a href="https://freighter.app" target="_blank" rel="noreferrer"
                         className="underline font-semibold" style={{ color: "#4338CA" }}>
                         Get Freighter
