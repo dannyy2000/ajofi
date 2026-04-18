@@ -12,36 +12,24 @@
  * If funds were deployed to Blend, they are withdrawn first before advancing.
  */
 
-import { advanceRound, markWithdrawn } from "../contract.js";
-import { askAI }                        from "../llm.js";
-import { buildRoundAdvancementPrompt }  from "../prompts.js";
-import { logDecision }                  from "../logger.js";
-import { withdrawFromBlend }            from "../blend.js";
+import { advanceRound }               from "../contract.js";
+import { askAI }                       from "../llm.js";
+import { buildRoundAdvancementPrompt } from "../prompts.js";
+import { logDecision }                 from "../logger.js";
+
+// Tracks "groupId-round" pairs already advanced this process lifetime.
+// Prevents duplicate advances when the RPC returns stale paid_count after a
+// successful advance transaction (Soroban testnet state can lag ~30s).
+const advancedRounds = new Set();
 
 export async function handleRoundAdvancement(group, members) {
   const allPaid = Number(group.paid_count) === Number(group.total_members);
   if (!allPaid) return;
 
-  // Withdraw from Blend first if funds are deployed
-  if (Number(group.fund_status) === 1) {
-    try {
-      const { yieldEarned } = await withdrawFromBlend(group.id);
-      const txHash = await markWithdrawn(group.id, yieldEarned);
+  const roundKey = `${group.id}-${group.current_round}`;
+  if (advancedRounds.has(roundKey)) return; // already advanced this round
 
-      logDecision({
-        type:      "YIELD",
-        groupId:   group.id,
-        action:    "WITHDRAW",
-        reasoning: "All members have paid. Withdrawing from Blend Protocol before advancing round.",
-        txHash,
-        metadata:  { yieldEarned },
-      });
-    } catch (err) {
-      console.error(`[Round] Blend withdrawal failed for group ${group.id}:`, err.message);
-      // Do not advance if withdrawal failed — funds may still be in Blend
-      return;
-    }
-  }
+  // Blend yield is disabled — fund_status will always be Idle (0), skip withdrawal
 
   // Ask AI to select the winner
   const result = await askAI(buildRoundAdvancementPrompt(group, members));
@@ -61,6 +49,9 @@ export async function handleRoundAdvancement(group, members) {
 
   try {
     const txHash = await advanceRound(group.id, winner);
+
+    // Mark as advanced AFTER success so we don't retry on stale RPC reads
+    advancedRounds.add(roundKey);
 
     logDecision({
       type:      "ROUND_ADVANCE",

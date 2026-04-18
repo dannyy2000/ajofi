@@ -3,7 +3,7 @@ import { createServer } from "http";
 import { startTreasurer } from "./src/treasurer.js";
 
 // Health-check server — keeps Render Web Service alive (free tier requires a port binding)
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3002;
 createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ status: "ok", service: "ajofi-treasurer", ts: new Date().toISOString() }));

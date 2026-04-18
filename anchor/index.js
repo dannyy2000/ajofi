@@ -286,8 +286,12 @@ app.get("/deposit", (req, res) => {
 
 app.post("/deposit/confirm", async (req, res) => {
   const { id, account, currency, local_amount } = req.body;
-  const tx = transactions.get(id);
-  if (!tx) return res.status(404).send("Transaction not found");
+  let tx = transactions.get(id);
+  // Auto-create transaction record for direct/demo links (id may not be pre-registered)
+  if (!tx) {
+    tx = { id, kind: "deposit", status: "incomplete", asset_code: "TUSDC", account, created_at: new Date().toISOString() };
+    transactions.set(id, tx);
+  }
 
   const usdcAmount  = parseFloat(usdcFromLocal(parseFloat(local_amount), currency));
   const rate        = RATES[currency];
@@ -328,8 +332,11 @@ app.get("/withdraw", (req, res) => {
 
 app.post("/withdraw/confirm", async (req, res) => {
   const { id, account, currency, usdc_amount, dest } = req.body;
-  const tx = transactions.get(id);
-  if (!tx) return res.status(404).send("Transaction not found");
+  let tx = transactions.get(id);
+  if (!tx) {
+    tx = { id, kind: "withdraw", status: "incomplete", asset_code: "TUSDC", account, created_at: new Date().toISOString() };
+    transactions.set(id, tx);
+  }
 
   const localAmount = parseFloat(localFromUsdc(parseFloat(usdc_amount), currency));
   const rate        = RATES[currency];

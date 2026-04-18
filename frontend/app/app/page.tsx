@@ -23,6 +23,12 @@ export default function AppPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const authModalRef = useRef<(() => Promise<{ address: string }>) | null>(null);
 
+  // If wallet already connected from a previous session, go straight to dashboard
+  useEffect(() => {
+    const saved = localStorage.getItem("ajofi_wallet");
+    if (saved) router.replace("/dashboard");
+  }, [router]);
+
   // Dynamically import SWK on the client only — avoids SSR issues with rxjs
   useEffect(() => {
     (async () => {
@@ -40,7 +46,16 @@ export default function AppPage() {
         ],
       });
 
-      authModalRef.current = () => StellarWalletsKit.authModal();
+      authModalRef.current = async () => {
+        const result = await StellarWalletsKit.authModal();
+        // Grab which wallet module the user picked so we can restore it later
+        try {
+          const id = StellarWalletsKit.selectedModule.productId;
+          return { ...result, id };
+        } catch {
+          return result;
+        }
+      };
       setSwkReady(true);
     })();
   }, []);
@@ -50,9 +65,10 @@ export default function AppPage() {
     setConnecting(true);
     try {
       // Opens the multi-wallet picker modal (Freighter, LOBSTR, Albedo, xBull…)
-      const { address } = await authModalRef.current();
+      const { address, id } = await authModalRef.current() as { address: string; id?: string };
       setPublicKey(address);
       localStorage.setItem("ajofi_wallet", address);
+      if (id) localStorage.setItem("ajofi_wallet_id", id);
       localStorage.setItem("ajofi_country", selected);
       setConnected(true);
       setTimeout(() => router.push("/intent"), 1200);

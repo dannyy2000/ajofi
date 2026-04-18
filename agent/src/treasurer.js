@@ -28,8 +28,6 @@ import { scoreMembers }                                   from "./agents/creditS
 
 const POLL_MS = parseInt(process.env.POLL_INTERVAL_MS ?? "15000");
 
-// Track which groups just had a round advance so we can re-score
-const pendingScoring = new Set();
 
 async function tick() {
   console.log(`\n[${new Date().toISOString()}] Treasurer tick`);
@@ -73,36 +71,20 @@ async function tick() {
       // a. Check for defaults (past deadline, unpaid members)
       await handleDefaults(groupView, memberViews);
 
-      // b. Advance round if all members paid
+      // b. Score members BEFORE advancing — has_paid is still true for everyone
+      //    who paid. Scoring after the advance sees has_paid=false (reset) and
+      //    the AI wrongly penalises members for "not paying yet" in the new round.
+      const allPaidNow = Number(groupView.paid_count) === Number(groupView.total_members);
+      if (allPaidNow) {
+        await scoreMembers(groupView, memberViews);
+      }
+
+      // c. Advance round if all members paid
       const roundBefore = groupView.current_round;
       await handleRoundAdvancement(groupView, memberViews);
 
-      // Re-fetch group after potential round advance
-      const updatedGroup = await getGroup(groupId);
-      if (updatedGroup && Number(updatedGroup.current_round) !== roundBefore) {
-        // Round advanced — re-score all members
-        pendingScoring.add(groupId);
-      }
-
       // c. Yield management
       await handleYield(groupView, memberViews);
-
-      // d. Credit scoring (after round advance)
-      if (pendingScoring.has(groupId)) {
-        const freshMembers = await getGroupMembers(groupId);
-        if (freshMembers) {
-          const freshViews = freshMembers.map((m) => ({
-            wallet:              m.wallet,
-            has_paid:            m.has_paid,
-            has_collateral:      m.has_collateral,
-            has_received_payout: m.has_received_payout,
-            credit_score:        Number(m.credit_score),
-            default_count:       Number(m.default_count),
-          }));
-          await scoreMembers(groupView, freshViews);
-          pendingScoring.delete(groupId);
-        }
-      }
     }
   } catch (err) {
     console.error("[Loop] Unhandled error in tick:", err.message);

@@ -19,22 +19,51 @@ const DURATIONS = [
   { label: "Monthly", value: 2592000, desc: "30 days" },
 ];
 
-const GROUP_SIZES = [3, 4, 5, 6, 8, 10];
+const GROUP_SIZES = [2, 3, 4, 5, 6, 8, 10];
 
 export default function IntentPage() {
   const router = useRouter();
   const [country, setCountry] = useState("NG");
   const [wallet, setWallet] = useState("");
   const [localAmount, setLocalAmount] = useState("");
-  const [groupSize, setGroupSize] = useState(5);
+  const [groupSize, setGroupSize] = useState(2);
   const [duration, setDuration] = useState(604800);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => {
-    setCountry(localStorage.getItem("ajofi_country") || "NG");
-    setWallet(localStorage.getItem("ajofi_wallet") || "");
-  }, []);
+    const w = localStorage.getItem("ajofi_wallet") || "";
+    const c = localStorage.getItem("ajofi_country") || "NG";
+    setCountry(c);
+    setWallet(w);
+    // If no wallet at all, send back to connect
+    if (!w) { router.replace("/app"); return; }
+    // If user already submitted an intent (localStorage), check if it's still
+    // active on-chain. If the group completed, the intent is stale — clear it.
+    const existingIntent = localStorage.getItem("ajofi_intent");
+    if (existingIntent) { router.replace("/dashboard"); return; }
+    // (If localStorage was cleared by "New intent" button, fall through to the form)
+    // Also check the contract — the previous session may have confirmed on-chain
+    // but crashed before localStorage was set (e.g. "Bad union switch" error).
+    (async () => {
+      try {
+        const { getMyIntent } = await import("../lib/stellar");
+        const onChainIntent = await getMyIntent(w);
+        // Only redirect if intent exists AND is still unmatched (waiting for group).
+        // If matched=true the group already exists — user can submit a new intent.
+        if (onChainIntent && !onChainIntent.matched) {
+          localStorage.setItem("ajofi_intent", JSON.stringify({
+            wallet: w,
+            amount: (Number(onChainIntent.contribution_amount) / 1e7).toFixed(2),
+            groupSize: onChainIntent.desired_group_size,
+            duration: onChainIntent.round_duration,
+            submittedAt: Date.now(),
+          }));
+          router.replace("/dashboard");
+        }
+      } catch { /* contract read failure is non-fatal — show the form */ }
+    })();
+  }, [router]);
 
   const curr = CURRENCY_RATES[country] || CURRENCY_RATES.NG;
   const usdcAmount = localAmount ? (parseFloat(localAmount) / curr.rate).toFixed(2) : "0.00";
@@ -44,18 +73,24 @@ export default function IntentPage() {
   const cycleWeeks = Math.round((duration * groupSize) / 604800);
   const hasAmount = localAmount && parseFloat(localAmount) > 0;
 
+  const [error, setError] = useState<string | null>(null);
+
   async function submitIntent() {
-    if (!hasAmount) return;
+    if (!hasAmount || !wallet) return;
     setSubmitting(true);
+    setError(null);
     try {
-      await new Promise((r) => setTimeout(r, 1500));
+      const { registerIntent } = await import("../lib/stellar");
+      await registerIntent(wallet, parseFloat(usdcAmount), groupSize, duration);
       localStorage.setItem("ajofi_intent", JSON.stringify({
         wallet, amount: usdcAmount, groupSize, duration,
         currency: curr.name, localAmount, submittedAt: Date.now(),
       }));
       setSubmitted(true);
       setTimeout(() => router.push("/dashboard"), 2000);
-    } catch (err) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Transaction failed";
+      setError(msg.includes("require_auth") || msg.includes("sign") ? "Wallet rejected the transaction." : msg);
       console.error(err);
     } finally {
       setSubmitting(false);
@@ -276,6 +311,13 @@ export default function IntentPage() {
                       </p>
                     </div>
                   </div>
+
+                  {error && (
+                    <div className="rounded-xl p-3 text-xs font-semibold"
+                      style={{ background: "#FEF2F2", color: "#DC2626", border: "1px solid #FECACA" }}>
+                      {error}
+                    </div>
+                  )}
 
                   <button onClick={submitIntent} disabled={!hasAmount || submitting}
                     className="w-full py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 transition-all"

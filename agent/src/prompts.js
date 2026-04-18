@@ -179,19 +179,20 @@ CURRENT SCORE: ${currentScore}
 ON-CHAIN HISTORY ACROSS ALL GROUPS:
 ${JSON.stringify(groupHistory, null, 2)}
 
-SCORING FACTORS (weight accordingly):
-- Payment timeliness: paid before deadline = positive, paid late = slight negative, defaulted = heavy negative
-- Consistency: consecutive clean rounds build trust
-- Default count: first default -20 points, subsequent -40 points each
-- Group completions: completing a full group cycle is a strong positive signal
-- Recovery: if someone defaulted but has since completed multiple clean rounds, reflect that improvement
+SCORING RULES (apply strictly):
+- Paid on time this round, no defaults ever: score MUST be 100. Do not reduce for any reason.
+- Paid on time this round, previously had defaults but has now recovered (3+ clean rounds): increase by 5–10, max 95.
+- Paid on time this round, score below 100 due to past defaults: increase by 5 toward 100.
+- Did not pay this round (has_paid=false) AND deadline has passed: -20 first offense, -40 repeat.
+- Defaulted (collateral slashed): -20 first offense, -40 repeat, floor at 10.
+- Completed a full group cycle with no defaults: bonus +5, max 100.
 
 SCORE BOUNDS:
-- New member with no history: 100 (fresh start, benefit of the doubt)
-- Perfect history: 100
-- One default recovered: 70–80
-- Repeat defaults: below 50
-- Multiple unresolved defaults: below 30
+- No defaults, paid on time every round: 100
+- One default, now recovered (3+ clean rounds): 80–90
+- One default, not yet recovered: 60–70
+- Two defaults: 40–50
+- Three or more defaults: below 30
 
 Respond with JSON only:
 {
