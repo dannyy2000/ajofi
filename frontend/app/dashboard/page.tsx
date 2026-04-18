@@ -290,7 +290,7 @@ export default function DashboardPage() {
         {!loading && groups.map((group) => {
           const groupMembers = members[group.id] || [];
           const me = groupMembers.find((m) => m.wallet === walletRaw);
-          const paidCount = groupMembers.filter((m) => m.paid_count !== undefined ? m.has_paid : m.has_paid).length;
+          const paidCount = groupMembers.filter((m) => m.has_paid).length;
           const deadlineSecs = group.round_deadline;
           const nowSecs = Math.floor(Date.now() / 1000);
           const secsLeft = Math.max(0, deadlineSecs - nowSecs);
