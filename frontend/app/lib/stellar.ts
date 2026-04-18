@@ -198,7 +198,7 @@ async function signAndSubmit(walletAddress: string, buildArgs: {
   makeArgs: (sdk: any) => any[];
 }): Promise<string> {
   const sdk = await import("@stellar/stellar-sdk");
-  const { Contract, TransactionBuilder, BASE_FEE, Networks, rpc } = sdk;
+  const { Contract, TransactionBuilder, BASE_FEE, Networks, rpc, Horizon, Account } = sdk;
 
   // Re-init SWK with modules and restore the wallet the user chose on /app.
   // StellarWalletsKit is a static class — calling init() again is safe and
@@ -218,9 +218,11 @@ async function signAndSubmit(walletAddress: string, buildArgs: {
   const walletId = typeof window !== "undefined" ? localStorage.getItem("ajofi_wallet_id") : null;
   if (walletId && walletId !== "undefined") StellarWalletsKit.setWallet(walletId);
 
-  const server   = new rpc.Server(RPC_URL);
-  const contract = new Contract(CONTRACT_ID);
-  const account  = await server.getAccount(walletAddress);
+  const server        = new rpc.Server(RPC_URL);
+  const horizonServer = new Horizon.Server("https://horizon-testnet.stellar.org");
+  const contract      = new Contract(CONTRACT_ID);
+  const accData       = await horizonServer.loadAccount(walletAddress);
+  const account       = new Account(walletAddress, accData.sequenceNumber());
   const scArgs   = buildArgs.makeArgs(sdk);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
