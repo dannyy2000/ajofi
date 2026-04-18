@@ -3,9 +3,9 @@
 mod test;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token,
-    Address, Env, String, Vec,
-    symbol_short,
+    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
+    contract, contractimpl, contracttype, symbol_short, token,
+    Address, Env, IntoVal, Symbol, Val, Vec,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,16 +42,17 @@ pub struct Member {
 #[derive(Clone)]
 pub struct Group {
     pub id:                  u64,
-    pub contribution_amount: i128,   // in stroops (USDC smallest unit)
-    pub collateral_amount:   i128,   // 2x contribution for new members
+    pub contribution_amount: i128,
+    pub collateral_amount:   i128,
     pub total_members:       u32,
-    pub current_round:       u32,    // 1-indexed, 0 = not started
+    pub current_round:       u32,
     pub paid_count:          u32,
-    pub round_deadline:      u64,    // unix timestamp
-    pub round_duration:      u64,    // seconds
+    pub round_deadline:      u64,
+    pub round_duration:      u64,
     pub status:              GroupStatus,
     pub fund_status:         FundStatus,
     pub yield_earned:        i128,
+    pub deployed_amount:     i128,  // how much USDC was sent to Blend
     pub created_at:          u64,
     pub member_addresses:    Vec<Address>,
 }
@@ -66,6 +67,16 @@ pub struct Intent {
     pub matched:             bool,
 }
 
+/// Mirrors Blend Protocol's Request struct — same field names so XDR encodes identically.
+/// request_type: 0 = Supply, 1 = Withdraw
+#[contracttype]
+#[derive(Clone)]
+pub struct BlendRequest {
+    pub request_type: u32,
+    pub address:      Address,
+    pub amount:       i128,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Storage Keys
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,13 +86,14 @@ pub enum DataKey {
     Admin,
     Agent,
     UsdcToken,
+    BlendPool,                     // Blend pool contract address
     GroupCount,
     IntentCount,
     Group(u64),
-    Member(u64, Address),        // (group_id, wallet)
+    Member(u64, Address),          // (group_id, wallet)
     Intent(u64),
-    WalletIntent(Address),       // wallet → intent_id
-    MemberGroups(Address),       // wallet → Vec<group_id>
+    WalletIntent(Address),         // wallet → intent_id
+    MemberGroups(Address),         // wallet → Vec<group_id>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,22 +110,35 @@ impl AjoFi {
     // Initialize
     // ─────────────────────────────────────────────────────────────────────────
 
-    pub fn initialize(env: Env, admin: Address, agent: Address, usdc_token: Address) {
+    pub fn initialize(
+        env:        Env,
+        admin:      Address,
+        agent:      Address,
+        usdc_token: Address,
+        blend_pool: Address,
+    ) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
-        env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::Agent, &agent);
-        env.storage().instance().set(&DataKey::UsdcToken, &usdc_token);
-        env.storage().instance().set(&DataKey::GroupCount, &0u64);
+        env.storage().instance().set(&DataKey::Admin,      &admin);
+        env.storage().instance().set(&DataKey::Agent,      &agent);
+        env.storage().instance().set(&DataKey::UsdcToken,  &usdc_token);
+        env.storage().instance().set(&DataKey::BlendPool,  &blend_pool);
+        env.storage().instance().set(&DataKey::GroupCount,  &0u64);
         env.storage().instance().set(&DataKey::IntentCount, &0u64);
+    }
+
+    /// Admin can update the Blend pool address (e.g. if pool changes)
+    pub fn set_blend_pool(env: Env, blend_pool: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::BlendPool, &blend_pool);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Intent Registration
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// User registers their savings intent for AI matchmaking
     pub fn register_intent(
         env:                 Env,
         caller:              Address,
@@ -130,7 +155,6 @@ impl AjoFi {
             panic!("group size must be between 2 and 10");
         }
 
-        // Check if wallet already has an unmatched intent
         if env.storage().persistent().has(&DataKey::WalletIntent(caller.clone())) {
             let existing_id: u64 = env.storage().persistent()
                 .get(&DataKey::WalletIntent(caller.clone()))
@@ -170,7 +194,6 @@ impl AjoFi {
     // Group Creation (agent only)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Agent creates a group from matched intents
     pub fn create_group(
         env:                 Env,
         member_wallets:      Vec<Address>,
@@ -200,13 +223,13 @@ impl AjoFi {
             status:              GroupStatus::Forming,
             fund_status:         FundStatus::Idle,
             yield_earned:        0,
+            deployed_amount:     0,
             created_at:          env.ledger().timestamp(),
             member_addresses:    member_wallets.clone(),
         };
 
         env.storage().persistent().set(&DataKey::Group(group_count), &group);
 
-        // Initialize each member
         for wallet in member_wallets.iter() {
             let member = Member {
                 wallet:              wallet.clone(),
@@ -218,14 +241,12 @@ impl AjoFi {
             };
             env.storage().persistent().set(&DataKey::Member(group_count, wallet.clone()), &member);
 
-            // Track groups per wallet
             let mut member_groups: Vec<u64> = env.storage().persistent()
                 .get(&DataKey::MemberGroups(wallet.clone()))
                 .unwrap_or(Vec::new(&env));
             member_groups.push_back(group_count);
             env.storage().persistent().set(&DataKey::MemberGroups(wallet.clone()), &member_groups);
 
-            // Mark their intent as matched
             if env.storage().persistent().has(&DataKey::WalletIntent(wallet.clone())) {
                 let intent_id: u64 = env.storage().persistent()
                     .get(&DataKey::WalletIntent(wallet.clone()))
@@ -252,7 +273,6 @@ impl AjoFi {
     // Collateral (members)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Member locks collateral to join the group
     pub fn lock_collateral(env: Env, caller: Address, group_id: u64) {
         caller.require_auth();
 
@@ -272,7 +292,6 @@ impl AjoFi {
             panic!("collateral already locked");
         }
 
-        // Transfer collateral from member to contract
         let usdc: Address = env.storage().instance().get(&DataKey::UsdcToken).unwrap();
         let token_client = token::Client::new(&env, &usdc);
         token_client.transfer(&caller, &env.current_contract_address(), &group.collateral_amount);
@@ -280,12 +299,8 @@ impl AjoFi {
         member.has_collateral = true;
         env.storage().persistent().set(&DataKey::Member(group_id, caller.clone()), &member);
 
-        env.events().publish(
-            (symbol_short!("COL_LOCK"), group_id),
-            caller.clone(),
-        );
+        env.events().publish((symbol_short!("COL_LOCK"), group_id), caller.clone());
 
-        // Check if all members have locked — activate group if so
         let all_locked = group.member_addresses.iter().all(|addr| {
             let m: Member = env.storage().persistent()
                 .get(&DataKey::Member(group_id, addr.clone()))
@@ -298,11 +313,7 @@ impl AjoFi {
             group.current_round = 1;
             group.round_deadline = env.ledger().timestamp() + group.round_duration;
             env.storage().persistent().set(&DataKey::Group(group_id), &group);
-
-            env.events().publish(
-                (symbol_short!("GRP_ACT"), group_id),
-                env.ledger().timestamp(),
-            );
+            env.events().publish((symbol_short!("GRP_ACT"), group_id), env.ledger().timestamp());
         } else {
             env.storage().persistent().set(&DataKey::Group(group_id), &group);
         }
@@ -312,7 +323,6 @@ impl AjoFi {
     // Contributions (members)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Member pays their contribution for the current round
     pub fn pay_contribution(env: Env, caller: Address, group_id: u64) {
         caller.require_auth();
 
@@ -335,7 +345,6 @@ impl AjoFi {
             panic!("already paid this round");
         }
 
-        // Transfer contribution from member to contract
         let usdc: Address = env.storage().instance().get(&DataKey::UsdcToken).unwrap();
         let token_client = token::Client::new(&env, &usdc);
         token_client.transfer(&caller, &env.current_contract_address(), &group.contribution_amount);
@@ -356,7 +365,6 @@ impl AjoFi {
     // Round Advancement (agent only)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Agent advances the round and pays the winner
     pub fn advance_round(env: Env, group_id: u64, winner: Address) {
         let agent: Address = env.storage().instance().get(&DataKey::Agent).unwrap();
         agent.require_auth();
@@ -372,7 +380,6 @@ impl AjoFi {
             panic!("funds still deployed — withdraw first");
         }
 
-        // Payout = contributions from all paid members + any yield earned
         let mut payout = group.paid_count as i128 * group.contribution_amount;
         if group.yield_earned > 0 {
             payout += group.yield_earned;
@@ -381,7 +388,6 @@ impl AjoFi {
 
         let round_just_completed = group.current_round;
 
-        // Reset payment state for all members
         for addr in group.member_addresses.iter() {
             let mut m: Member = env.storage().persistent()
                 .get(&DataKey::Member(group_id, addr.clone()))
@@ -391,7 +397,6 @@ impl AjoFi {
         }
         group.paid_count = 0;
 
-        // Mark winner and transfer payout
         let mut winner_member: Member = env.storage().persistent()
             .get(&DataKey::Member(group_id, winner.clone()))
             .expect("winner not a member");
@@ -407,16 +412,10 @@ impl AjoFi {
             (round_just_completed, winner.clone(), payout),
         );
 
-        // Check if this was the last round
         if round_just_completed == group.total_members {
             group.status = GroupStatus::Completed;
             env.storage().persistent().set(&DataKey::Group(group_id), &group);
-
-            env.events().publish(
-                (symbol_short!("GRP_END"), group_id),
-                round_just_completed,
-            );
-
+            env.events().publish((symbol_short!("GRP_END"), group_id), round_just_completed);
             Self::return_collateral(&env, group_id);
         } else {
             group.current_round += 1;
@@ -429,13 +428,12 @@ impl AjoFi {
     // Default Handling (agent only)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Agent slashes a defaulting member's collateral and pays the winner
     pub fn handle_default(
-        env:      Env,
-        group_id: u64,
+        env:       Env,
+        group_id:  u64,
         defaulter: Address,
-        winner:   Address,
-        reason:   String,
+        winner:    Address,
+        reason:    soroban_sdk::String,
     ) {
         let agent: Address = env.storage().instance().get(&DataKey::Agent).unwrap();
         agent.require_auth();
@@ -460,7 +458,6 @@ impl AjoFi {
         dm.has_collateral = false;
         dm.default_count += 1;
 
-        // Credit score penalty — heavier for repeat offenders
         let penalty: u32 = if dm.default_count == 1 { 20 } else { 40 };
         dm.credit_score = dm.credit_score.saturating_sub(penalty);
 
@@ -471,10 +468,8 @@ impl AjoFi {
             (defaulter.clone(), slash_amount, reason, dm.credit_score),
         );
 
-        // Payout = contributions from paying members + slashed collateral
         let payout = group.paid_count as i128 * group.contribution_amount + slash_amount;
 
-        // Reset payment state for next round
         for addr in group.member_addresses.iter() {
             let mut m: Member = env.storage().persistent()
                 .get(&DataKey::Member(group_id, addr.clone()))
@@ -484,7 +479,6 @@ impl AjoFi {
         }
         group.paid_count = 0;
 
-        // Pay the winner
         let usdc: Address = env.storage().instance().get(&DataKey::UsdcToken).unwrap();
         let token_client = token::Client::new(&env, &usdc);
         token_client.transfer(&env.current_contract_address(), &winner, &payout);
@@ -507,11 +501,13 @@ impl AjoFi {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Yield Management (agent only) — Blend Protocol hooks
+    // Yield Management (agent only) — real Blend Protocol integration
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Agent marks funds as deployed to Blend (actual Blend call happens in agent)
-    pub fn mark_deployed(env: Env, group_id: u64) {
+    /// Agent calls this to supply idle contributions to Blend for yield.
+    /// The contract calls Blend's submit() directly — funds never leave the
+    /// contract-to-contract call chain.
+    pub fn deploy_to_blend(env: Env, group_id: u64) {
         let agent: Address = env.storage().instance().get(&DataKey::Agent).unwrap();
         agent.require_auth();
 
@@ -525,18 +521,69 @@ impl AjoFi {
         if group.fund_status == FundStatus::Deployed {
             panic!("already deployed");
         }
+        if group.paid_count == 0 {
+            panic!("no contributions to deploy");
+        }
 
-        group.fund_status = FundStatus::Deployed;
+        let deploy_amount = group.paid_count as i128 * group.contribution_amount;
+        let usdc:       Address = env.storage().instance().get(&DataKey::UsdcToken).unwrap();
+        let blend_pool: Address = env.storage().instance().get(&DataKey::BlendPool).unwrap();
+        let contract = env.current_contract_address();
+
+        // Pre-authorise the token transfer that Blend will make on our behalf.
+        // Blend's submit() calls token.transfer(spender=contract, pool, amount)
+        // which requires the contract to have signed off on it.
+        env.authorize_as_current_contract(
+            soroban_sdk::vec![&env,
+                InvokerContractAuthEntry::Contract(SubContractInvocation {
+                    context: ContractContext {
+                        contract: usdc.clone(),
+                        fn_name:  Symbol::new(&env, "transfer"),
+                        args:     (
+                            contract.clone(),
+                            blend_pool.clone(),
+                            deploy_amount,
+                        ).into_val(&env),
+                    },
+                    sub_invocations: soroban_sdk::vec![&env],
+                })
+            ]
+        );
+
+        // Build a Supply request (request_type = 0)
+        let requests: Vec<BlendRequest> = soroban_sdk::vec![&env,
+            BlendRequest {
+                request_type: 0,
+                address:      usdc.clone(),
+                amount:       deploy_amount,
+            }
+        ];
+
+        // Cross-contract call to Blend pool.submit(from, spender, to, requests)
+        // from = spender = to = this contract (we own the funds and receive bTokens)
+        let _: Val = env.invoke_contract(
+            &blend_pool,
+            &Symbol::new(&env, "submit"),
+            soroban_sdk::vec![&env,
+                contract.clone().into_val(&env),
+                contract.clone().into_val(&env),
+                contract.clone().into_val(&env),
+                requests.into_val(&env),
+            ],
+        );
+
+        group.fund_status     = FundStatus::Deployed;
+        group.deployed_amount = deploy_amount;
         env.storage().persistent().set(&DataKey::Group(group_id), &group);
 
         env.events().publish(
             (symbol_short!("DEPLOYED"), group_id),
-            group.paid_count as i128 * group.contribution_amount,
+            deploy_amount,
         );
     }
 
-    /// Agent records yield earned and marks funds as returned from Blend
-    pub fn mark_withdrawn(env: Env, group_id: u64, yield_amount: i128) {
+    /// Agent calls this to withdraw funds + yield from Blend before payout.
+    pub fn withdraw_from_blend(env: Env, group_id: u64) {
         let agent: Address = env.storage().instance().get(&DataKey::Agent).unwrap();
         agent.require_auth();
 
@@ -548,13 +595,51 @@ impl AjoFi {
             panic!("funds not deployed");
         }
 
-        group.fund_status = FundStatus::Idle;
-        group.yield_earned += yield_amount;
+        let usdc:       Address = env.storage().instance().get(&DataKey::UsdcToken).unwrap();
+        let blend_pool: Address = env.storage().instance().get(&DataKey::BlendPool).unwrap();
+        let contract = env.current_contract_address();
+
+        // Snapshot USDC balance before withdrawal so we can compute yield
+        let token_client  = token::Client::new(&env, &usdc);
+        let balance_before = token_client.balance(&contract);
+
+        // Withdraw request — amount slightly above deployed to catch all yield.
+        // Blend caps the withdrawal at the actual position so this is safe.
+        let withdraw_amount = group.deployed_amount * 2;
+
+        let requests: Vec<BlendRequest> = soroban_sdk::vec![&env,
+            BlendRequest {
+                request_type: 1,        // Withdraw
+                address:      usdc.clone(),
+                amount:       withdraw_amount,
+            }
+        ];
+
+        // Cross-contract call — Blend transfers USDC back to this contract
+        let _: Val = env.invoke_contract(
+            &blend_pool,
+            &Symbol::new(&env, "submit"),
+            soroban_sdk::vec![&env,
+                contract.clone().into_val(&env),
+                contract.clone().into_val(&env),
+                contract.clone().into_val(&env),
+                requests.into_val(&env),
+            ],
+        );
+
+        // Calculate how much came back
+        let balance_after   = token_client.balance(&contract);
+        let tokens_received = balance_after - balance_before;
+        let yield_earned    = (tokens_received - group.deployed_amount).max(0);
+
+        group.fund_status     = FundStatus::Idle;
+        group.yield_earned   += yield_earned;
+        group.deployed_amount = 0;
         env.storage().persistent().set(&DataKey::Group(group_id), &group);
 
         env.events().publish(
             (symbol_short!("WITHDRAW"), group_id),
-            yield_amount,
+            yield_earned,
         );
     }
 
@@ -562,13 +647,7 @@ impl AjoFi {
     // Credit Score Update (agent only)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Agent updates a member's credit score after scoring
-    pub fn update_credit_score(
-        env:       Env,
-        group_id:  u64,
-        wallet:    Address,
-        new_score: u32,
-    ) {
+    pub fn update_credit_score(env: Env, group_id: u64, wallet: Address, new_score: u32) {
         let agent: Address = env.storage().instance().get(&DataKey::Agent).unwrap();
         agent.require_auth();
 

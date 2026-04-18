@@ -2,9 +2,55 @@
 
 use super::*;
 use soroban_sdk::{
+    contract, contractimpl,
     testutils::{Address as _},
     token, Address, Env, String,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mock Blend Pool
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[contract]
+pub struct MockBlendPool;
+
+#[contractimpl]
+impl MockBlendPool {
+    /// Store the USDC token address so submit() can move tokens.
+    pub fn init(env: Env, usdc: Address) {
+        env.storage().instance().set(&symbol_short!("usdc"), &usdc);
+    }
+
+    /// Minimal Blend pool submit() implementation for testing.
+    /// Supply (type=0): pulls USDC from `from` into the pool.
+    /// Withdraw (type=1): pushes all USDC held by the pool back to `to`.
+    pub fn submit(
+        env:      Env,
+        from:     Address,
+        _spender: Address,
+        to:       Address,
+        requests: soroban_sdk::Vec<BlendRequest>,
+    ) -> soroban_sdk::Vec<i128> {
+        let usdc: Address = env.storage().instance().get(&symbol_short!("usdc")).unwrap();
+        let token_client  = token::Client::new(&env, &usdc);
+        let pool          = env.current_contract_address();
+
+        for req in requests.iter() {
+            if req.request_type == 0 {
+                // Supply — pull USDC from AjoFi contract into the mock pool
+                token_client.transfer(&from, &pool, &req.amount);
+            } else {
+                // Withdraw — send everything the pool holds back to AjoFi
+                let available = token_client.balance(&pool);
+                if available > 0 {
+                    token_client.transfer(&pool, &to, &available);
+                }
+            }
+        }
+
+        soroban_sdk::vec![&env, 0i128]
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -21,14 +67,15 @@ fn mint_usdc(env: &Env, token: &Address, admin: &Address, to: &Address, amount: 
 }
 
 struct TestSetup {
-    env:    Env,
-    admin:  Address,
-    agent:  Address,
-    alice:  Address,
-    bob:    Address,
-    charlie: Address,
-    token:  Address,
-    contract: Address,
+    env:        Env,
+    admin:      Address,
+    agent:      Address,
+    alice:      Address,
+    bob:        Address,
+    charlie:    Address,
+    token:      Address,
+    contract:   Address,
+    blend_pool: Address,
 }
 
 const CONTRIBUTION: i128 = 50_000_000;  // 50 USDC (7 decimals)
@@ -53,11 +100,14 @@ impl TestSetup {
             mint_usdc(&env, &token, &admin, wallet, 10_000_000_000); // 10,000 USDC each
         }
 
-        let contract = env.register(AjoFi, ());
-        let client = AjoFiClient::new(&env, &contract);
-        client.initialize(&admin, &agent, &token);
+        let contract   = env.register(AjoFi, ());
+        let blend_pool = env.register(MockBlendPool, ());
+        MockBlendPoolClient::new(&env, &blend_pool).init(&token);
 
-        TestSetup { env, admin, agent, alice, bob, charlie, token, contract }
+        let client = AjoFiClient::new(&env, &contract);
+        client.initialize(&admin, &agent, &token, &blend_pool);
+
+        TestSetup { env, admin, agent, alice, bob, charlie, token, contract, blend_pool }
     }
 
     fn client(&self) -> AjoFiClient {
@@ -332,7 +382,7 @@ fn test_handle_default_repeat_offender_heavier_penalty() {
 }
 
 #[test]
-fn test_mark_deployed_and_withdrawn() {
+fn test_deploy_and_withdraw_from_blend() {
     let setup = TestSetup::new();
     let group_id = setup.create_group();
     setup.lock_all_collateral(group_id);
@@ -340,22 +390,21 @@ fn test_mark_deployed_and_withdrawn() {
 
     let client = setup.client();
 
-    // Funds should be idle
     assert_eq!(client.get_group(&group_id).fund_status, FundStatus::Idle);
     assert_eq!(client.get_idle_funds(&group_id), CONTRIBUTION * 3);
 
-    // Agent marks as deployed
-    client.mark_deployed(&group_id);
+    // Deploy to Blend — cross-contract call moves USDC into MockBlendPool
+    client.deploy_to_blend(&group_id);
     assert_eq!(client.get_group(&group_id).fund_status, FundStatus::Deployed);
     assert_eq!(client.get_idle_funds(&group_id), 0);
 
-    // Agent marks as withdrawn with yield
-    let yield_amount: i128 = 750_000; // 0.75 USDC yield
-    client.mark_withdrawn(&group_id, &yield_amount);
+    // Withdraw from Blend — MockBlendPool returns USDC (no yield in this test)
+    client.withdraw_from_blend(&group_id);
 
     let group = client.get_group(&group_id);
     assert_eq!(group.fund_status, FundStatus::Idle);
-    assert_eq!(group.yield_earned, yield_amount);
+    assert_eq!(group.yield_earned, 0);
+    assert_eq!(group.deployed_amount, 0);
 }
 
 #[test]
@@ -367,22 +416,26 @@ fn test_advance_round_includes_yield() {
 
     let client = setup.client();
 
-    // Simulate yield earned
-    client.mark_deployed(&group_id);
-    let yield_amount: i128 = 1_500_000; // 1.5 USDC
+    // Deploy to Blend
+    client.deploy_to_blend(&group_id);
 
-    // Mint yield amount to contract to simulate Blend returning more than deposited
-    mint_usdc(&setup.env, &setup.token, &setup.admin, &setup.contract, yield_amount);
-    client.mark_withdrawn(&group_id, &yield_amount);
+    let yield_amount: i128 = 1_500_000; // 1.5 USDC simulated yield
+
+    // Mint yield directly into the mock Blend pool to simulate interest earned
+    mint_usdc(&setup.env, &setup.token, &setup.admin, &setup.blend_pool, yield_amount);
+
+    // Withdraw — pool returns principal + yield to contract
+    client.withdraw_from_blend(&group_id);
+
+    let group = client.get_group(&group_id);
+    assert_eq!(group.yield_earned, yield_amount);
 
     let alice_before = setup.token_balance(&setup.alice);
     client.advance_round(&group_id, &setup.alice);
     let alice_gained = setup.token_balance(&setup.alice) - alice_before;
 
-    // Alice gets contributions + yield
+    // Alice gets all contributions + yield
     assert_eq!(alice_gained, CONTRIBUTION * 3 + yield_amount);
-
-    // Yield should be cleared after payout
     assert_eq!(client.get_group(&group_id).yield_earned, 0);
 }
 

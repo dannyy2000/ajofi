@@ -20,11 +20,10 @@ import sdk        from "@stellar/stellar-sdk";
 
 const {
   Keypair,
-  Asset,
+  Account,
   TransactionBuilder,
   BASE_FEE,
   Networks,
-  Operation,
   rpc,
   nativeToScVal,
   Address,
@@ -51,11 +50,10 @@ const anchorKeypair  = Keypair.fromSecret(ANCHOR_SECRET);
 const server         = new rpc.Server(RPC_URL);
 const horizonServer  = new Horizon.Server("https://horizon-testnet.stellar.org");
 
-// Classic asset: TUSDC issued by anchor keypair
-const TUSDC_ASSET = new Asset("TUSDC", anchorKeypair.publicKey());
+// Blend USDC Soroban token contract
+const BLEND_USDC_CONTRACT = process.env.USDC_ASSET_ID;
 
 // Exchange rates: how many local currency units per 1 USDC
-// These are approximate real-world rates
 const RATES = {
   NGN: { name: "Nigerian Naira",   flag: "🇳🇬", rate: 1580, min: 500,   max: 5_000_000  },
   GHS: { name: "Ghanaian Cedi",    flag: "🇬🇭", rate: 13.5, min: 10,    max: 50_000     },
@@ -74,55 +72,63 @@ function localFromUsdc(usdcAmount, currency) {
   return (usdcAmount * RATES[currency].rate).toFixed(2);
 }
 
-async function ensureTrustline(destinationWallet) {
-  /**
-   * Check if the destination wallet has a trustline to TUSDC.
-   * If not, this is a no-op — the user needs to add it from their wallet.
-   * In the demo UI we instruct them to do this first.
-   */
-  try {
-    const account = await horizonServer.loadAccount(destinationWallet);
-    const hasTrustline = account.balances.some(
-      (b) => b.asset_code === "TUSDC" && b.asset_issuer === anchorKeypair.publicKey()
-    );
-    return hasTrustline;
-  } catch {
-    return false;
-  }
-}
+async function sendBlendUsdcToWallet(destinationWallet, usdcAmount, attempt = 1) {
+  const stroops  = BigInt(Math.round(usdcAmount * 10_000_000));
+  const contract = new Contract(BLEND_USDC_CONTRACT);
 
-async function mintUsdcToWallet(destinationWallet, usdcAmount) {
-  /**
-   * Mint TUSDC to a user's wallet via classic Stellar payment.
-   * The anchor keypair is the issuer — issuer payments create new tokens.
-   * The destination must have a trustline to TUSDC:ISSUER.
-   */
-  const hasTrustline = await ensureTrustline(destinationWallet);
-  if (!hasTrustline) {
-    throw new Error(
-      `Wallet has no trustline to TUSDC. Please add TUSDC (issuer: ${anchorKeypair.publicKey()}) to your wallet first.`
-    );
-  }
+  const accData = await horizonServer.loadAccount(anchorKeypair.publicKey());
+  const account = new Account(anchorKeypair.publicKey(), accData.sequenceNumber());
 
-  const account = await horizonServer.loadAccount(anchorKeypair.publicKey());
   const tx = new TransactionBuilder(account, {
     fee:               BASE_FEE,
     networkPassphrase: NETWORK_PASS,
   })
     .addOperation(
-      Operation.payment({
-        destination: destinationWallet,
-        asset:       TUSDC_ASSET,
-        amount:      usdcAmount.toFixed(7),
-      })
+      contract.call(
+        "transfer",
+        new Address(anchorKeypair.publicKey()).toScVal(),
+        new Address(destinationWallet).toScVal(),
+        nativeToScVal(stroops, { type: "i128" }),
+      )
     )
     .setTimeout(30)
     .build();
 
-  tx.sign(anchorKeypair);
+  let sim;
+  try {
+    sim = await server.simulateTransaction(tx);
+  } catch (err) {
+    if (attempt < 7) {
+      const delay = attempt * 2000;
+      console.log(`[Anchor] Simulate failed (attempt ${attempt}), retrying in ${delay/1000}s...`);
+      await new Promise((r) => setTimeout(r, delay));
+      return sendBlendUsdcToWallet(destinationWallet, usdcAmount, attempt + 1);
+    }
+    throw err;
+  }
 
-  const result = await horizonServer.submitTransaction(tx);
-  return result.hash;
+  if (sim.error) throw new Error(`Simulation failed: ${JSON.stringify(sim.error)}`);
+
+  const assembled = rpc.assembleTransaction(tx, sim).build();
+  assembled.sign(anchorKeypair);
+
+  const result = await server.sendTransaction(assembled);
+  if (result.status === "ERROR") throw new Error(`Transaction failed: ${JSON.stringify(result.errorResult)}`);
+
+  // Poll for confirmation
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const resp = await fetch(RPC_URL, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getTransaction", params: { hash: result.hash } }),
+    });
+    const json   = await resp.json();
+    const status = json?.result?.status ?? "NOT_FOUND";
+    if (status === "SUCCESS") return result.hash;
+    if (status === "FAILED")  throw new Error("Transaction failed on-chain");
+  }
+  throw new Error("Transaction not confirmed in time");
 }
 
 // ─── SEP-10 stub — wallet auth (simplified for demo) ─────────────────────────
@@ -305,8 +311,8 @@ app.post("/deposit/confirm", async (req, res) => {
   transactions.set(id, tx);
 
   try {
-    // Mint USDC to the user's wallet
-    const txHash = await mintUsdcToWallet(account, usdcAmount);
+    // Transfer Blend USDC to the user's wallet
+    const txHash = await sendBlendUsdcToWallet(account, usdcAmount);
 
     tx.status          = "completed";
     tx.stellar_transaction_id = txHash;
@@ -315,7 +321,7 @@ app.post("/deposit/confirm", async (req, res) => {
 
     res.send(successPage(currency, local_amount, usdcAmount, txHash, rate));
   } catch (err) {
-    console.error("[Anchor] Mint error:", err.message);
+    console.error("[Anchor] Mint error:", err.message || err.toString(), err.stack?.split('\n')[1]);
     tx.status         = "error";
     tx.message        = err.message;
     transactions.set(id, tx);
@@ -713,4 +719,7 @@ app.listen(PORT, () => {
   console.log(`  GET  /transaction?id=`);
   console.log(`  GET  /deposit?id=&account=    (UI)`);
   console.log(`  GET  /withdraw?id=&account=   (UI)\n`);
+
+  // Pre-warm the Soroban RPC connection so first deposit doesn't hit a cold socket
+  server.getHealth().then(() => console.log("[Anchor] Soroban RPC warmed up")).catch(() => {});
 });

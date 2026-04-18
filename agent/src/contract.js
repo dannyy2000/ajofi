@@ -5,6 +5,7 @@
 
 import sdk from "@stellar/stellar-sdk";
 const {
+  Account,
   Contract,
   Networks,
   TransactionBuilder,
@@ -16,7 +17,7 @@ const {
   rpc,
 } = sdk;
 
-import { server, agentKeypair } from "./stellar.js";
+import { server, horizonServer, agentKeypair } from "./stellar.js";
 
 const CONTRACT_ID        = process.env.CONTRACT_ID;
 const NETWORK_PASSPHRASE = process.env.NETWORK_PASSPHRASE || Networks.TESTNET;
@@ -25,9 +26,15 @@ const NETWORK_PASSPHRASE = process.env.NETWORK_PASSPHRASE || Networks.TESTNET;
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Load account from Horizon (always reliable) instead of Soroban RPC
+async function loadAccount() {
+  const acc = await horizonServer.loadAccount(agentKeypair.publicKey());
+  return new Account(agentKeypair.publicKey(), acc.sequenceNumber());
+}
+
 async function simulate(functionName, ...args) {
   const contract = new Contract(CONTRACT_ID);
-  const account  = await server.getAccount(agentKeypair.publicKey());
+  const account  = await loadAccount();
 
   const tx = new TransactionBuilder(account, {
     fee:               BASE_FEE,
@@ -42,7 +49,7 @@ async function simulate(functionName, ...args) {
 
 async function invokeContract(functionName, ...args) {
   const contract = new Contract(CONTRACT_ID);
-  const account  = await server.getAccount(agentKeypair.publicKey());
+  const account  = await loadAccount();
 
   const tx = new TransactionBuilder(account, {
     fee:               BASE_FEE,
@@ -90,7 +97,7 @@ export async function getAllIntents() {
     const raw = scValToNative(result.result.retval);
     return Array.isArray(raw) ? raw : [];
   } catch (err) {
-    console.error("[Contract] getAllIntents error:", err.message);
+    console.error("[Contract] getAllIntents error:", err.code || err.message || String(err));
     return [];
   }
 }
@@ -102,7 +109,7 @@ export async function getAllActiveGroups() {
     const raw = scValToNative(result.result.retval);
     return Array.isArray(raw) ? raw.map(Number) : [];
   } catch (err) {
-    console.error("[Contract] getAllActiveGroups error:", err.message);
+    console.error("[Contract] getAllActiveGroups error:", err.code || err.message || String(err));
     return [];
   }
 }
@@ -162,16 +169,12 @@ export async function handleDefault(groupId, defaulterAddress, winnerAddress, re
   );
 }
 
-export async function markDeployed(groupId) {
-  return invokeContract("mark_deployed", nativeToScVal(BigInt(groupId), { type: "u64" }));
+export async function deployToBlend(groupId) {
+  return invokeContract("deploy_to_blend", nativeToScVal(BigInt(groupId), { type: "u64" }));
 }
 
-export async function markWithdrawn(groupId, yieldAmount) {
-  return invokeContract(
-    "mark_withdrawn",
-    nativeToScVal(BigInt(groupId),      { type: "u64" }),
-    nativeToScVal(BigInt(yieldAmount),  { type: "i128" }),
-  );
+export async function withdrawFromBlend(groupId) {
+  return invokeContract("withdraw_from_blend", nativeToScVal(BigInt(groupId), { type: "u64" }));
 }
 
 export async function updateCreditScore(groupId, wallet, newScore) {

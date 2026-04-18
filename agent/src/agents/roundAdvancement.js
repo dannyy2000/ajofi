@@ -29,7 +29,11 @@ export async function handleRoundAdvancement(group, members) {
   const roundKey = `${group.id}-${group.current_round}`;
   if (advancedRounds.has(roundKey)) return; // already advanced this round
 
-  // Blend yield is disabled — fund_status will always be Idle (0), skip withdrawal
+  // Block advancement if funds are still in Blend — withdraw must happen first
+  if (group.fund_status[0] !== "Idle") {
+    console.log(`[Round] Group ${group.id}: funds still deployed to Blend, skipping advancement`);
+    return;
+  }
 
   // Ask AI to select the winner
   const result = await askAI(buildRoundAdvancementPrompt(group, members));

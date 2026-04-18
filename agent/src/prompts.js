@@ -50,9 +50,10 @@ If no valid matches exist return: { "groups": [] }`;
 export function buildYieldPrompt(group, members, nowTs) {
   const secsUntilDeadline = Number(group.round_deadline) - nowTs;
   const hoursUntilDeadline = (secsUntilDeadline / 3600).toFixed(2);
-  const idleFunds = (Number(group.paid_count) * Number(group.contribution_amount)) / 1e7;
-  const allPaid   = Number(group.paid_count) === Number(group.total_members);
-  const fundStatus = Number(group.fund_status) === 0 ? "IDLE" : "DEPLOYED";
+  const totalPaid  = Number(group.paid_count) * Number(group.contribution_amount);
+  const idleFunds  = (totalPaid - Number(group.deployed_amount)) / 1e7;
+  const allPaid    = Number(group.paid_count) === Number(group.total_members);
+  const fundStatus = group.fund_status[0] === "Idle" ? "IDLE" : "DEPLOYED";
 
   return `You are the AjoFi AI Treasurer managing yield on behalf of a rotating savings group. Between when members contribute and when the round winner is paid, idle funds can be deployed to Blend Protocol (a Stellar-native lending protocol) to earn yield. Your job is to decide whether to deploy, withdraw, or hold right now.
 
@@ -71,7 +72,7 @@ ${members.map((m) => `  ${m.wallet}: paid=${m.has_paid}, collateral=${m.has_coll
 
 DECISION RULES:
 - DEPLOY: only if fundStatus is IDLE, idleFunds > 0, hoursUntilDeadline > 2, and no members with has_collateral=false (defaulted members)
-- WITHDRAW: only if fundStatus is DEPLOYED and hoursUntilDeadline < 1
+- WITHDRAW: if fundStatus is DEPLOYED and (hoursUntilDeadline < 1 OR allPaid is true — all members have contributed so the round can advance immediately)
 - HOLD: everything else
 
 These are real people's savings. If there is any doubt, HOLD. Never deploy if a default situation is unresolved.

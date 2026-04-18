@@ -64,7 +64,8 @@ async function tick() {
         paid_count:          Number(group.paid_count),
         round_deadline:      group.round_deadline,
         round_duration:      group.round_duration,
-        fund_status:         Number(group.fund_status),
+        fund_status:         group.fund_status,   // enum array: ["Idle"] | ["Deployed"]
+        deployed_amount:     group.deployed_amount,
         yield_earned:        group.yield_earned,
       };
 
@@ -80,7 +81,6 @@ async function tick() {
       }
 
       // c. Advance round if all members paid
-      const roundBefore = groupView.current_round;
       await handleRoundAdvancement(groupView, memberViews);
 
       // c. Yield management
