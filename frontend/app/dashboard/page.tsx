@@ -217,7 +217,7 @@ export default function DashboardPage() {
         )}
 
         {/* Pending intent card — reads from contract, always visible after submit */}
-        {!loading && walletRaw && myIntent && groups.length === 0 && (
+        {!loading && walletRaw && myIntent && (
           <div className="bg-white rounded-3xl border overflow-hidden mb-6 shadow-sm"
             style={{ borderColor: "rgba(99,102,241,0.1)", boxShadow: "0 4px 24px rgba(0,0,0,0.04)" }}>
             <div className="px-6 py-5 border-b flex items-center justify-between"
