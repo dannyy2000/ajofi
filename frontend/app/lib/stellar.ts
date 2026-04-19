@@ -83,7 +83,7 @@ export async function getMyIntent(wallet: string): Promise<Intent | null> {
     // get_all_intents returns all intents; filter for this wallet
     const raw = await simulateRead("get_all_intents", []);
     if (!Array.isArray(raw)) return null;
-    const mine = raw.find((i) => String(i.wallet) === wallet);
+    const mine = raw.find((i) => String(i.wallet) === wallet && !i.matched);
     if (!mine) return null;
     return {
       wallet:              String(mine.wallet),
