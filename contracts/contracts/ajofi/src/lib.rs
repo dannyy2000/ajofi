@@ -5,7 +5,7 @@ mod test;
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     contract, contractimpl, contracttype, symbol_short, token,
-    Address, Env, IntoVal, Symbol, Val, Vec,
+    Address, BytesN, Env, IntoVal, Symbol, Val, Vec,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -754,6 +754,12 @@ impl AjoFi {
     // Internal Helpers
     // ─────────────────────────────────────────────────────────────────────────
 
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let agent: Address = env.storage().instance().get(&DataKey::Agent).unwrap();
+        agent.require_auth();
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
     fn return_collateral(env: &Env, group_id: u64) {
         let group: Group = env.storage().persistent()
             .get(&DataKey::Group(group_id))
@@ -761,6 +767,7 @@ impl AjoFi {
 
         let usdc: Address = env.storage().instance().get(&DataKey::UsdcToken).unwrap();
         let token_client = token::Client::new(env, &usdc);
+        let contract = env.current_contract_address();
 
         for addr in group.member_addresses.iter() {
             let m: Member = env.storage().persistent()
@@ -768,15 +775,16 @@ impl AjoFi {
                 .unwrap();
 
             if m.has_collateral {
-                token_client.transfer(
-                    &env.current_contract_address(),
-                    &addr,
-                    &group.collateral_amount,
-                );
-                env.events().publish(
-                    (symbol_short!("COL_RET"), group_id),
-                    addr.clone(),
-                );
+                // Cap at actual balance to absorb any rounding loss from Blend withdrawals
+                let balance = token_client.balance(&contract);
+                let amount = if balance < group.collateral_amount { balance } else { group.collateral_amount };
+                if amount > 0 {
+                    token_client.transfer(&contract, &addr, &amount);
+                    env.events().publish(
+                        (symbol_short!("COL_RET"), group_id),
+                        addr.clone(),
+                    );
+                }
             }
         }
     }
