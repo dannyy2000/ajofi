@@ -36,12 +36,18 @@ export async function handleRoundAdvancement(group, members) {
   }
 
   // Ask AI to select the winner
-  const result = await askAI(buildRoundAdvancementPrompt(group, members));
+  let result;
+  try {
+    result = await askAI(buildRoundAdvancementPrompt(group, members));
+  } catch (err) {
+    console.error(`[Round] AI call failed for group ${group.id}:`, err.message);
+    return false;
+  }
   const { winner, reasoning } = result;
 
   if (!winner) {
     console.error(`[Round] AI returned no winner for group ${group.id}`);
-    return;
+    return false;
   }
 
   // Validate winner is a real member who hasn't received a payout
