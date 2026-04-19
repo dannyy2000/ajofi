@@ -1,0 +1,15 @@
+name: Keep Render Services Alive
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"  # every 5 minutes
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Agent
+        run: curl -s https://ajofi.onrender.com/health
+      - name: Ping Anchor
+        run: curl -s https://ajofi-1.onrender.com/
