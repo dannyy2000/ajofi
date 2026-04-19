@@ -45,10 +45,12 @@ const FAQS = [
 export default function LandingPage() {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [dark, setDark] = useState(false);
+  const [returning, setReturning] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem("ajofi_dark") === "true";
     setDark(saved);
+    if (localStorage.getItem("ajofi_wallet")) setReturning(true);
   }, []);
 
   const d = dark;
@@ -162,14 +164,14 @@ export default function LandingPage() {
               {dark ? <Sun size={16} /> : <Moon size={16} />}
             </button>
 
-            <Link href="/app"
+            <Link href={returning ? "/dashboard" : "/app"}
               className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all hover:opacity-90 hover:scale-[1.03] active:scale-95"
               style={{
                 background: "linear-gradient(135deg, #5B21B6, #7C3AED)",
                 boxShadow: "0 4px 16px rgba(91,33,182,0.35)",
                 letterSpacing: "-0.01em",
               }}>
-              Connect <ArrowRight size={14} />
+              {returning ? "Dashboard" : "Connect"} <ArrowRight size={14} />
             </Link>
           </div>
         </div>
@@ -205,10 +207,10 @@ export default function LandingPage() {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-20">
-            <Link href="/app"
+            <Link href={returning ? "/dashboard" : "/app"}
               className="flex items-center gap-2.5 text-white px-10 py-4 rounded-2xl font-bold text-base transition-all hover:opacity-95 hover:scale-105"
               style={{ background: "linear-gradient(135deg, #5B21B6, #7C3AED)", boxShadow: "0 8px 30px rgba(91,33,182,0.38)" }}>
-              Start Saving Free <ArrowRight size={18} />
+              {returning ? "Go to Dashboard" : "Start Saving Free"} <ArrowRight size={18} />
             </Link>
             <a href="#how-it-works"
               className="flex items-center gap-2 px-8 py-4 rounded-2xl font-semibold text-base border transition-all hover:border-violet-400"
@@ -429,10 +431,10 @@ export default function LandingPage() {
           <p className="text-xl mb-12 leading-relaxed font-medium" style={{ color: "#C7D2FE" }}>
             Join West Africans building financial security together. Your first group is one click away.
           </p>
-          <Link href="/app"
+          <Link href={returning ? "/dashboard" : "/app"}
             className="inline-flex items-center gap-3 text-white px-12 py-5 rounded-2xl font-black text-lg transition-all hover:scale-105"
             style={{ background: "linear-gradient(135deg, #F59E0B, #D97706)", boxShadow: "0 8px 32px rgba(245,158,11,0.4)" }}>
-            Start Saving <ArrowRight size={22} />
+            {returning ? "Go to Dashboard" : "Start Saving"} <ArrowRight size={22} />
           </Link>
           <div className="flex items-center justify-center gap-8 mt-10 text-sm font-medium" style={{ color: "#A5B4FC" }}>
             {["No hidden fees", "Funds on-chain", "AI protected"].map((t) => (

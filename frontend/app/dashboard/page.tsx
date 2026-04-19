@@ -155,9 +155,8 @@ export default function DashboardPage() {
           <button
             onClick={() => {
               localStorage.removeItem("ajofi_wallet");
-              localStorage.removeItem("ajofi_country");
               localStorage.removeItem("ajofi_intent");
-              window.location.href = "/app";
+              window.location.href = "/";
             }}
             className="text-xs px-3 py-1.5 rounded-xl font-bold border transition-all hover:bg-red-50"
             style={{ color: "#94A3B8", borderColor: "#E2E8F0" }}>
@@ -510,7 +509,7 @@ export default function DashboardPage() {
         {/* Deposit / Withdraw */}
         {walletRaw && (
           <div className="grid md:grid-cols-2 gap-4 mb-6">
-            <a href={`${ANCHOR_URL}/deposit?id=demo&account=${walletRaw}`} target="_blank" rel="noreferrer"
+            <a href={`${ANCHOR_URL}/deposit?id=demo&account=${walletRaw}&currency=${country === "GH" ? "GHS" : "NGN"}`} target="_blank" rel="noreferrer"
               className="card-hover flex items-center justify-between p-5 rounded-2xl transition-all"
               style={{ background: "linear-gradient(135deg, #4338CA, #7C3AED)", boxShadow: "0 8px 24px rgba(67,56,202,0.3)" }}>
               <div>
@@ -524,7 +523,7 @@ export default function DashboardPage() {
                 <Plus size={22} className="text-white" />
               </div>
             </a>
-            <a href={`${ANCHOR_URL}/withdraw?id=demo&account=${walletRaw}`} target="_blank" rel="noreferrer"
+            <a href={`${ANCHOR_URL}/withdraw?id=demo&account=${walletRaw}&currency=${country === "GH" ? "GHS" : "NGN"}`} target="_blank" rel="noreferrer"
               className="card-hover flex items-center justify-between p-5 rounded-2xl border transition-all"
               style={{ background: dark ? "#1A192A" : "#FFFFFF", borderColor: "rgba(99,102,241,0.12)", boxShadow: "0 2px 12px rgba(0,0,0,0.04)" }}>
               <div>

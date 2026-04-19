@@ -16,6 +16,12 @@ const COUNTRIES = [
 export default function AppPage() {
   const router = useRouter();
   const [selected, setSelected] = useState<string | null>(null);
+  const [savedCountry, setSavedCountry] = useState<string | null>(null);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("ajofi_country");
+    if (saved) { setSelected(saved); setSavedCountry(saved); }
+  }, []);
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
   const [publicKey, setPublicKey] = useState<string | null>(null);
@@ -193,7 +199,62 @@ export default function AppPage() {
                   Redirecting...
                 </div>
               </div>
+            ) : savedCountry ? (
+              /* ── Returning user: skip country picker ── */
+              <>
+                <div className="mb-10">
+                  <Link href="/" className="inline-flex items-center gap-1.5 text-sm font-semibold mb-8 hover:text-indigo-600 transition-colors"
+                    style={{ color: "#94A3B8" }}>
+                    <ArrowLeft size={14} /> Back to home
+                  </Link>
+                  <h1 className="text-[2rem] font-black mb-3 leading-tight" style={{ color: "#0F172A", letterSpacing: "-0.035em" }}>
+                    Welcome back
+                  </h1>
+                  <p className="text-base leading-relaxed" style={{ color: "#64748B" }}>
+                    Reconnect your wallet to continue saving.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-4 p-4 rounded-2xl border-2 mb-8"
+                  style={{ background: "#EEF2FF", borderColor: "#4338CA" }}>
+                  <span className="text-2xl">{COUNTRIES.find(c => c.code === savedCountry)?.flag}</span>
+                  <div className="flex-1">
+                    <div className="font-bold text-sm" style={{ color: "#0F172A" }}>{COUNTRIES.find(c => c.code === savedCountry)?.name}</div>
+                    <div className="text-xs font-medium" style={{ color: "#94A3B8" }}>{COUNTRIES.find(c => c.code === savedCountry)?.currency} · {COUNTRIES.find(c => c.code === savedCountry)?.desc}</div>
+                  </div>
+                  <button onClick={() => setSavedCountry(null)} className="text-xs font-semibold underline" style={{ color: "#6366F1" }}>Change</button>
+                </div>
+
+                <button
+                  onClick={connectWallet}
+                  disabled={connecting || !swkReady}
+                  className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl font-black text-base transition-all"
+                  style={{
+                    background: swkReady ? "linear-gradient(135deg, #5B21B6, #7C3AED)" : "#E2E8F0",
+                    color: swkReady ? "#FFFFFF" : "#94A3B8",
+                    cursor: swkReady ? "pointer" : "not-allowed",
+                    boxShadow: swkReady ? "0 8px 24px rgba(91,33,182,0.3)" : "none",
+                  }}>
+                  {connecting ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Connecting wallet...
+                    </>
+                  ) : (
+                    <>
+                      <Wallet size={18} />
+                      Connect Stellar Wallet
+                      <ArrowRight size={18} />
+                    </>
+                  )}
+                </button>
+
+                <p className="text-center text-xs mt-4 font-medium" style={{ color: "#CBD5E1" }}>
+                  By connecting, you agree to save trustlessly on Stellar
+                </p>
+              </>
             ) : (
+              /* ── New user: full country picker ── */
               <>
                 <div className="mb-10">
                   <Link href="/" className="inline-flex items-center gap-1.5 text-sm font-semibold mb-8 hover:text-indigo-600 transition-colors"
@@ -257,9 +318,7 @@ export default function AppPage() {
                   disabled={!selected || connecting || !swkReady}
                   className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl font-black text-base transition-all"
                   style={{
-                    background: selected && swkReady
-                      ? "linear-gradient(135deg, #5B21B6, #7C3AED)"
-                      : "#E2E8F0",
+                    background: selected && swkReady ? "linear-gradient(135deg, #5B21B6, #7C3AED)" : "#E2E8F0",
                     color: selected && swkReady ? "#FFFFFF" : "#94A3B8",
                     cursor: selected && swkReady ? "pointer" : "not-allowed",
                     boxShadow: selected && swkReady ? "0 8px 24px rgba(91,33,182,0.3)" : "none",

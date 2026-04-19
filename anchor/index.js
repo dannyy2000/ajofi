@@ -286,8 +286,8 @@ app.get("/transactions", (req, res) => {
 // ─── Deposit UI ───────────────────────────────────────────────────────────────
 
 app.get("/deposit", (req, res) => {
-  const { id, account } = req.query;
-  res.send(depositPage(id, account));
+  const { id, account, currency } = req.query;
+  res.send(depositPage(id, account, currency));
 });
 
 app.post("/deposit/confirm", async (req, res) => {
@@ -332,8 +332,8 @@ app.post("/deposit/confirm", async (req, res) => {
 // ─── Withdraw UI ─────────────────────────────────────────────────────────────
 
 app.get("/withdraw", (req, res) => {
-  const { id, account } = req.query;
-  res.send(withdrawPage(id, account));
+  const { id, account, currency } = req.query;
+  res.send(withdrawPage(id, account, currency));
 });
 
 app.post("/withdraw/confirm", async (req, res) => {
@@ -362,7 +362,8 @@ app.post("/withdraw/confirm", async (req, res) => {
 
 // ─── HTML Pages ───────────────────────────────────────────────────────────────
 
-function depositPage(id, account) {
+function depositPage(id, account, currency = 'NGN') {
+  const preselect = currency === 'GHS' ? 'GHS' : 'NGN';
   const shortAccount = `${account?.slice(0,4)}...${account?.slice(-4)}`;
   return `<!DOCTYPE html>
 <html lang="en">
@@ -413,16 +414,16 @@ function depositPage(id, account) {
     <form method="POST" action="/deposit/confirm" id="depositForm">
       <input type="hidden" name="id" value="${id}" />
       <input type="hidden" name="account" value="${account}" />
-      <input type="hidden" name="currency" id="currencyInput" value="NGN" />
+      <input type="hidden" name="currency" id="currencyInput" value="${preselect}" />
 
       <label>Select your country</label>
       <div class="currency-row">
-        <div class="currency-opt selected" onclick="selectCurrency('NGN', this)">
+        <div class="currency-opt ${preselect === 'NGN' ? 'selected' : ''}" onclick="selectCurrency('NGN', this)">
           <span class="flag">🇳🇬</span>
           <span class="code">NGN</span>
           <span class="name">Nigeria</span>
         </div>
-        <div class="currency-opt" onclick="selectCurrency('GHS', this)">
+        <div class="currency-opt ${preselect === 'GHS' ? 'selected' : ''}" onclick="selectCurrency('GHS', this)">
           <span class="flag">🇬🇭</span>
           <span class="code">GHS</span>
           <span class="name">Ghana</span>
@@ -450,7 +451,7 @@ function depositPage(id, account) {
 
   <script>
     const RATES = { NGN: 1580, GHS: 13.5 };
-    let currentCurrency = 'NGN';
+    let currentCurrency = '${preselect}';
 
     function selectCurrency(code, el) {
       currentCurrency = code;
@@ -468,6 +469,7 @@ function depositPage(id, account) {
       document.getElementById('rateLabel').textContent =
         'Rate: 1 USDC = ' + rate.toLocaleString() + ' ' + currentCurrency;
     }
+    updateRate();
   </script>
 </body>
 </html>`;
@@ -526,7 +528,8 @@ function successPage(currency, localAmount, usdcAmount, txHash, rate) {
 </html>`;
 }
 
-function withdrawPage(id, account) {
+function withdrawPage(id, account, currency = 'NGN') {
+  const preselect = currency === 'GHS' ? 'GHS' : 'NGN';
   const shortAccount = `${account?.slice(0,4)}...${account?.slice(-4)}`;
   return `<!DOCTYPE html>
 <html lang="en">
@@ -575,16 +578,16 @@ function withdrawPage(id, account) {
     <form method="POST" action="/withdraw/confirm" id="withdrawForm">
       <input type="hidden" name="id" value="${id}" />
       <input type="hidden" name="account" value="${account}" />
-      <input type="hidden" name="currency" id="currencyInput" value="NGN" />
+      <input type="hidden" name="currency" id="currencyInput" value="${preselect}" />
 
       <label>Receive in</label>
       <div class="currency-row">
-        <div class="currency-opt selected" onclick="selectCurrency('NGN', this)">
+        <div class="currency-opt ${preselect === 'NGN' ? 'selected' : ''}" onclick="selectCurrency('NGN', this)">
           <span class="flag">🇳🇬</span>
           <span class="code">NGN</span>
           <span class="name">Nigeria</span>
         </div>
-        <div class="currency-opt" onclick="selectCurrency('GHS', this)">
+        <div class="currency-opt ${preselect === 'GHS' ? 'selected' : ''}" onclick="selectCurrency('GHS', this)">
           <span class="flag">🇬🇭</span>
           <span class="code">GHS</span>
           <span class="name">Ghana</span>
@@ -615,7 +618,7 @@ function withdrawPage(id, account) {
 
   <script>
     const RATES = { NGN: 1580, GHS: 13.5 };
-    let currentCurrency = 'NGN';
+    let currentCurrency = '${preselect}';
 
     function selectCurrency(code, el) {
       currentCurrency = code;
@@ -634,6 +637,7 @@ function withdrawPage(id, account) {
       document.getElementById('rateLabel').textContent =
         'Rate: 1 USDC = ' + rate.toLocaleString() + ' ' + currentCurrency;
     }
+    updateRate();
   </script>
 </body>
 </html>`;
