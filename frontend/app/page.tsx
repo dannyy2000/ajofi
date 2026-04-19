@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Shield, Users, Zap, TrendingUp, ChevronDown,
   ArrowRight, Check, Globe, Star, Lock, Moon, Sun
@@ -45,6 +45,11 @@ const FAQS = [
 export default function LandingPage() {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [dark, setDark] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("ajofi_dark") === "true";
+    setDark(saved);
+  }, []);
 
   const d = dark;
 
@@ -150,7 +155,7 @@ export default function LandingPage() {
           {/* Right side — dark toggle + Connect — absolute far RIGHT */}
           <div className="flex items-center gap-3 flex-shrink-0">
             <button
-              onClick={() => setDark(!dark)}
+              onClick={() => { const next = !dark; setDark(next); localStorage.setItem("ajofi_dark", String(next)); }}
               className="w-9 h-9 rounded-xl flex items-center justify-center transition-all hover:scale-105"
               style={{ background: c.toggleBg, color: c.toggleColor }}
               aria-label="Toggle dark mode">

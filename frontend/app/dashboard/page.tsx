@@ -44,6 +44,7 @@ function usdcDisplay(stroops: bigint) {
 export default function DashboardPage() {
   const [walletRaw, setWalletRaw]   = useState("");
   const [country, setCountry]       = useState("NG");
+  const [dark, setDark]             = useState(false);
   const [loading, setLoading]       = useState(true);
   const [groups, setGroups]         = useState<Group[]>([]);
   const [members, setMembers]       = useState<Record<number, Member[]>>({});
@@ -82,8 +83,10 @@ export default function DashboardPage() {
   useEffect(() => {
     const w = localStorage.getItem("ajofi_wallet") || "";
     const c = localStorage.getItem("ajofi_country") || "NG";
+    const d = localStorage.getItem("ajofi_dark") === "true";
     setWalletRaw(w);
     setCountry(c);
+    setDark(d);
     loadData(w);
   }, [loadData]);
 
@@ -125,17 +128,24 @@ export default function DashboardPage() {
     : 100;
 
   return (
-    <div className="min-h-screen" style={{ background: "#F7F8FF" }}>
+    <div className="min-h-screen" style={{ background: dark ? "#0C0B14" : "#F7F8FF" }}>
 
       {/* Top bar */}
       <div className="glass border-b sticky top-0 z-40 px-5 h-14 flex items-center justify-between"
-        style={{ borderColor: "rgba(99,102,241,0.1)" }}>
+        style={{ borderColor: "rgba(99,102,241,0.1)", background: dark ? "rgba(12,11,20,0.92)" : undefined }}>
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl flex items-center justify-center"
-            style={{ background: "linear-gradient(135deg, #4338CA, #7C3AED)" }}>
-            <span className="text-white font-black text-xs">A</span>
-          </div>
-          <span className="font-black text-lg" style={{ color: "#0F172A" }}>AjoFi</span>
+          <svg width="32" height="32" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="36" height="36" rx="10" fill="url(#dashGrad)"/>
+            <circle cx="13.5" cy="18" r="5.5" fill="none" stroke="white" strokeWidth="2.2" opacity="0.95"/>
+            <circle cx="22.5" cy="18" r="5.5" fill="none" stroke="white" strokeWidth="2.2" opacity="0.95"/>
+            <defs>
+              <linearGradient id="dashGrad" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#5B21B6"/>
+                <stop offset="100%" stopColor="#7C3AED"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          <span className="font-black text-lg" style={{ color: dark ? "#F1F5F9" : "#0F172A" }}>AjoFi</span>
         </div>
         <div className="flex items-center gap-3">
           <div className="text-xs px-3 py-1.5 rounded-xl font-bold"
@@ -160,8 +170,8 @@ export default function DashboardPage() {
 
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-2xl font-black mb-1" style={{ color: "#0F172A" }}>My Dashboard</h1>
-          <p className="text-sm" style={{ color: "#64748B" }}>Your active savings groups and contributions.</p>
+          <h1 className="text-2xl font-black mb-1" style={{ color: dark ? "#F1F5F9" : "#0F172A" }}>My Dashboard</h1>
+          <p className="text-sm" style={{ color: dark ? "#94A3B8" : "#64748B" }}>Your active savings groups and contributions.</p>
         </div>
 
         {/* Stats */}
@@ -254,7 +264,7 @@ export default function DashboardPage() {
                 <span>💡</span>
                 <p className="text-sm" style={{ color: "#92400E" }}>
                   Once matched, you&apos;ll need to <strong>lock collateral</strong> ({(Number(myIntent.contribution_amount) / 10_000_000 * 2).toFixed(2)} USDC) to activate the group.
-                  Use the <strong>Deposit</strong> button below to get tUSDC first.
+                  Use the <strong>Deposit</strong> button below to get USDC first.
                 </p>
               </div>
             </div>
@@ -504,8 +514,10 @@ export default function DashboardPage() {
               className="card-hover flex items-center justify-between p-5 rounded-2xl transition-all"
               style={{ background: "linear-gradient(135deg, #4338CA, #7C3AED)", boxShadow: "0 8px 24px rgba(67,56,202,0.3)" }}>
               <div>
-                <div className="font-black text-white mb-1">Deposit NGN / GHS</div>
-                <div className="text-sm" style={{ color: "#A5B4FC" }}>Get tUSDC via bank transfer or mobile money</div>
+                <div className="font-black text-white mb-1">
+                  Deposit {country === "NG" ? "NGN" : country === "GH" ? "GHS" : "local currency"}
+                </div>
+                <div className="text-sm" style={{ color: "#A5B4FC" }}>Get USDC via bank transfer or mobile money</div>
               </div>
               <div className="w-12 h-12 rounded-2xl flex items-center justify-center"
                 style={{ background: "rgba(255,255,255,0.15)" }}>
@@ -514,10 +526,12 @@ export default function DashboardPage() {
             </a>
             <a href={`${ANCHOR_URL}/withdraw?id=demo&account=${walletRaw}`} target="_blank" rel="noreferrer"
               className="card-hover flex items-center justify-between p-5 rounded-2xl border transition-all"
-              style={{ background: "#FFFFFF", borderColor: "rgba(99,102,241,0.12)", boxShadow: "0 2px 12px rgba(0,0,0,0.04)" }}>
+              style={{ background: dark ? "#1A192A" : "#FFFFFF", borderColor: "rgba(99,102,241,0.12)", boxShadow: "0 2px 12px rgba(0,0,0,0.04)" }}>
               <div>
-                <div className="font-black mb-1" style={{ color: "#0F172A" }}>Withdraw to bank</div>
-                <div className="text-sm" style={{ color: "#64748B" }}>Send tUSDC back to your bank account</div>
+                <div className="font-black mb-1" style={{ color: dark ? "#F1F5F9" : "#0F172A" }}>Withdraw to bank</div>
+                <div className="text-sm" style={{ color: dark ? "#94A3B8" : "#64748B" }}>
+                  Send USDC back to your {country === "NG" ? "Nigerian" : country === "GH" ? "Ghanaian" : ""} bank account
+                </div>
               </div>
               <div className="w-12 h-12 rounded-2xl flex items-center justify-center"
                 style={{ background: "linear-gradient(135deg, #EEF2FF, #E0E7FF)" }}>
