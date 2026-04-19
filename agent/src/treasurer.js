@@ -81,10 +81,12 @@ async function tick() {
       }
 
       // c. Advance round if all members paid
-      await handleRoundAdvancement(groupView, memberViews);
+      const advanced = await handleRoundAdvancement(groupView, memberViews);
 
-      // c. Yield management
-      await handleYield(groupView, memberViews);
+      // d. Yield management — skip if we just advanced (groupView is stale after advance)
+      if (!advanced) {
+        await handleYield(groupView, memberViews);
+      }
     }
   } catch (err) {
     console.error("[Loop] Unhandled error in tick:", err.message);

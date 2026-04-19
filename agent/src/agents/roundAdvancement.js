@@ -71,6 +71,7 @@ export async function handleRoundAdvancement(group, members) {
     });
 
     console.log(`[Round] Group ${group.id} round ${group.current_round} advanced. Winner: ${winner}`);
+    return true; // signal to skip yield management this tick
   } catch (err) {
     console.error(`[Round] Advance failed for group ${group.id}:`, err.message);
     logDecision({
@@ -80,4 +81,5 @@ export async function handleRoundAdvancement(group, members) {
       reasoning: err.message,
     });
   }
+  return false;
 }
