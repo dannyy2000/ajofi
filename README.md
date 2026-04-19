@@ -3,7 +3,7 @@
 > AI-powered trustless rotating savings protocol for West Africa, built on Stellar.
 
 [![Built on Stellar](https://img.shields.io/badge/Built%20on-Stellar-blue)](https://stellar.org)
-[![Powered by Claude](https://img.shields.io/badge/AI-Claude%20API-purple)](https://anthropic.com)
+[![Powered by GPT-4o](https://img.shields.io/badge/AI-OpenAI%20GPT--4o-green)](https://openai.com)
 [![Stellar WA Build Residency](https://img.shields.io/badge/Stellar%20WA-Build%20Residency%202026-green)](https://stellar.org)
 
 ---
@@ -283,7 +283,7 @@ Rust-based smart contracts, deterministic execution, auditable bytecode, composa
 | **Afripay (SEP-24)** | XOF and XAF fiat on/off-ramp | Francophone West Africa |
 | **Blend Protocol** | Yield on idle pooled funds | Stellar-native |
 | **Stellar Wallets Kit** | Wallet connection for end users | Freighter, LOBSTR, xBull |
-| **Claude API** | Four autonomous AI agents | All protocol decisions |
+| **OpenAI API (GPT-4o)** | Four autonomous AI agents | All protocol decisions |
 
 ---
 
@@ -324,11 +324,11 @@ Stellar Wallets Kit is a unified wallet connection library for Stellar applicati
 
 ---
 
-### Claude API
+### OpenAI API
 
-All four of AjoFi's AI agents are powered by Claude via the Anthropic API. Claude was chosen for its reliability on structured JSON output — every agent prompt specifies an exact JSON schema and Claude returns consistent, parseable decisions. The agents operate at low temperature (0.2) for deterministic, conservative decision-making appropriate for financial operations.
+All four of AjoFi's AI agents are powered by GPT-4o via the OpenAI API. GPT-4o was chosen for its reliability on structured JSON output — every agent prompt specifies an exact JSON schema and the model returns consistent, parseable decisions. The agents operate at low temperature (0.2) for deterministic, conservative decision-making appropriate for financial operations.
 
-Every Claude API call is logged with the full prompt context, the model's reasoning, and the resulting action. This logging is what makes AjoFi's AI layer auditable — you can reconstruct exactly what information the model had and why it made the decision it did.
+Every API call is logged with the full prompt context, the model's reasoning, and the resulting action. This logging is what makes AjoFi's AI layer auditable — you can reconstruct exactly what information the model had and why it made the decision it did.
 
 ---
 
@@ -429,7 +429,7 @@ This is not the launch market. But the architecture supports them from day one.
                  ▼                             ▼
 ┌──────────────────────────┐   ┌──────────────────────────────────┐
 │     AI Agent Layer        │   │          Integrations             │
-│     (Claude API)          │   │                                   │
+│     (OpenAI GPT-4o)       │   │                                   │
 │                           │   │  Paychant SEP-24  (NGN / GHS)    │
 │  ┌─────────────────────┐  │   │  Afripay SEP-24   (XOF / XAF)   │
 │  │   Credit Scorer     │  │   │  Blend Protocol   (Yield)        │
@@ -521,7 +521,7 @@ The AI agent runs as a Node.js backend service. Every 15 seconds it executes a f
 4. Appends all decisions to `reasoning.log.json`
 5. Log is served to the frontend via `/api/log`
 
-Every Claude API call uses `response_format: json_object` and low temperature. The agent never interprets free-form text — every response is a structured JSON object with an action field and a reasoning field.
+Every GPT-4o call uses `response_format: json_object` and low temperature. The agent never interprets free-form text — every response is a structured JSON object with an action field and a reasoning field.
 
 ---
 
@@ -535,10 +535,43 @@ Every Claude API call uses `response_format: json_object` and low temperature. T
 | Fiat On-Ramp (NGN/GHS) | Paychant — SEP-24 |
 | Fiat On-Ramp (XOF/XAF) | Afripay Finance — SEP-24 |
 | Wallet Connection | Stellar Wallets Kit |
-| AI Agents | Claude API (Anthropic) — claude-sonnet-4-6 |
+| AI Agents | OpenAI API — GPT-4o |
 | Agent Runtime | Node.js, Stellar SDK |
 | Frontend | React, TypeScript, Tailwind CSS |
 | Frontend Wallet | Stellar Wallets Kit |
+
+---
+
+## Sprint Status
+
+### What's Built
+
+| Component | Notes |
+|---|---|
+| Soroban vault contract — escrow, collateral, contributions, payouts, intent registry, credit scores | Live on testnet |
+| AI Matchmaking Agent — scans intents every 15s, forms groups on-chain, logs full reasoning | Running |
+| AI Credit Scorer — recalculates member score after every round event | Running |
+| AI Default Predictor — monitors unpaid members before deadline | Running |
+| AI Yield Agent — deploy / withdraw / hold logic against Blend Protocol | Built · disabled for demo (see note) |
+| Custom SEP-24 demo anchor — NGN and GHS deposit and withdrawal, mints USDC to Stellar wallet | Live on Render |
+| Stellar Wallets Kit — Freighter, LOBSTR, xBull wallet connection | Live |
+| Frontend — landing, country selector (Nigeria / Ghana), intent page, dashboard, group page | Live on Vercel |
+| Agent reasoning log — every AI decision with full reasoning, served via `/log` | Live |
+| Autonomous agent on Render, GitHub Actions keepalive (every 5 min) | Running |
+
+**Note on Blend:** The yield integration is fully built and was running in production. It is disabled for the demo because Stellar testnet groups run in short timeframes — yield on Blend accrues slowly and the rounding loss on withdrawal (a few stroops) was enough to block payouts at small test amounts. In a real weekly group, idle funds sit in Blend for days and yield is meaningful. The architecture is complete; re-enabling is a one-line change.
+
+### What's Left
+
+| Component | Notes |
+|---|---|
+| Paychant SEP-24 integration (NGN / GHS) | Production anchor — current anchor is custom demo build |
+| AI Ramp Selector — live rate routing between anchors | Agent scaffolded, needs live anchor rate API wired |
+| Collateral tiers by credit score | Scoring runs and data accumulates — contract enforcement not yet active |
+| `handle_default` end-to-end | Default Predictor flags members — on-chain collateral slash not tested against a real deadline breach |
+| Agent reasoning log page on frontend | `/log` endpoint live — frontend display page not built |
+| Credit Data API | Designed — not built |
+| Mainnet deployment | Testnet stable — pending mainnet migration |
 
 ---
 
@@ -561,7 +594,7 @@ ajofi/
 │   │   │   ├── defaultPredictor.js   # Default Predictor agent
 │   │   │   ├── yieldAgent.js         # Yield Agent — Blend management
 │   │   │   └── rampSelector.js       # Ramp Selector — Paychant vs Afripay
-│   │   ├── prompts.js                # Claude prompt builders for all 4 agents
+│   │   ├── prompts.js                # GPT-4o prompt builders for all 4 agents
 │   │   ├── logger.js                 # Structured decision logging
 │   │   └── stellar.js                # Stellar SDK helpers and contract calls
 │   ├── index.js                      # Entry point
@@ -604,7 +637,7 @@ ajofi/
 - Stellar CLI (`stellar`)
 - Node.js 18+
 - A Stellar wallet (Freighter recommended)
-- Anthropic API key with Claude access
+- OpenAI API key with GPT-4o access
 - Stellar testnet account — fund via [Friendbot](https://friendbot.stellar.org)
 
 ---
@@ -647,7 +680,7 @@ cp .env.example .env
 Fill in `agent/.env`:
 
 ```env
-ANTHROPIC_API_KEY=sk-ant-...           # Claude API key
+OPENAI_API_KEY=sk-...                  # OpenAI API key (GPT-4o)
 AGENT_SECRET_KEY=S...                  # Stellar secret key for agent wallet
 HORIZON_URL=https://horizon-testnet.stellar.org
 CONTRACT_ID=C...                       # Deployed Soroban contract ID
