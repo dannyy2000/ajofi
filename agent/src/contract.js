@@ -44,7 +44,15 @@ async function simulate(functionName, ...args) {
     .setTimeout(30)
     .build();
 
-  return server.simulateTransaction(tx);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await server.simulateTransaction(tx);
+    } catch (err) {
+      if (attempt === 3) throw err;
+      console.warn(`[Contract] simulate ${functionName} attempt ${attempt} failed (${err.code || err.message}), retrying...`);
+      await new Promise(r => setTimeout(r, 2000 * attempt));
+    }
+  }
 }
 
 async function invokeContract(functionName, ...args) {
