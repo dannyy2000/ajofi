@@ -71,7 +71,8 @@ export default function IntentPage() {
   const collateral = localAmount ? (parseFloat(usdcAmount) * 2).toFixed(2) : "0.00";
   const selectedDuration = DURATIONS.find((d) => d.value === duration)!;
   const cycleWeeks = Math.round((duration * groupSize) / 604800);
-  const hasAmount = localAmount && parseFloat(localAmount) > 0;
+  const rawUsdc = localAmount ? parseFloat(localAmount) / curr.rate : 0;
+  const hasAmount = rawUsdc >= 0.0000001;
 
   const [error, setError] = useState<string | null>(null);
 
@@ -81,7 +82,8 @@ export default function IntentPage() {
     setError(null);
     try {
       const { registerIntent } = await import("../lib/stellar");
-      await registerIntent(wallet, parseFloat(usdcAmount), groupSize, duration);
+      const rawUsdc = parseFloat(localAmount) / curr.rate;
+      await registerIntent(wallet, rawUsdc, groupSize, duration);
       localStorage.setItem("ajofi_intent", JSON.stringify({
         wallet, amount: usdcAmount, groupSize, duration,
         currency: curr.name, localAmount, submittedAt: Date.now(),
