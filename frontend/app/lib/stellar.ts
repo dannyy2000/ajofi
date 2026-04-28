@@ -295,6 +295,13 @@ export async function registerIntent(
   });
 }
 
+export async function cancelIntent(wallet: string): Promise<string> {
+  return signAndSubmit(wallet, {
+    fnName: "cancel_intent",
+    makeArgs: ({ Address }) => [new Address(wallet).toScVal()],
+  });
+}
+
 export async function lockCollateral(wallet: string, groupId: number): Promise<string> {
   return signAndSubmit(wallet, {
     fnName: "lock_collateral",

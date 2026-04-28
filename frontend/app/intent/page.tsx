@@ -49,17 +49,8 @@ export default function IntentPage() {
       try {
         const { getMyIntent } = await import("../lib/stellar");
         const onChainIntent = await getMyIntent(w);
-        // Only redirect if intent exists AND is still unmatched (waiting for group).
-        // If matched=true the group already exists — user can submit a new intent.
         if (onChainIntent && !onChainIntent.matched) {
-          localStorage.setItem("ajofi_intent", JSON.stringify({
-            wallet: w,
-            amount: (Number(onChainIntent.contribution_amount) / 1e7).toFixed(2),
-            groupSize: onChainIntent.desired_group_size,
-            duration: onChainIntent.round_duration,
-            submittedAt: Date.now(),
-          }));
-          router.replace("/dashboard");
+          setHasExistingIntent(true);
         }
       } catch { /* contract read failure is non-fatal — show the form */ }
     })();
@@ -75,6 +66,25 @@ export default function IntentPage() {
   const hasAmount = rawUsdc >= 0.0000001;
 
   const [error, setError] = useState<string | null>(null);
+  const [hasExistingIntent, setHasExistingIntent] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+
+  async function cancelExistingIntent() {
+    if (!wallet) return;
+    setCancelling(true);
+    setError(null);
+    try {
+      const { cancelIntent } = await import("../lib/stellar");
+      await cancelIntent(wallet);
+      setHasExistingIntent(false);
+      localStorage.removeItem("ajofi_intent");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Cancel failed";
+      setError(msg.includes("require_auth") || msg.includes("sign") ? "Wallet rejected the transaction." : msg);
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   async function submitIntent() {
     if (!hasAmount || !wallet) return;
@@ -115,6 +125,39 @@ export default function IntentPage() {
             <div className="w-3 h-3 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin" />
             Opening your dashboard...
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (hasExistingIntent) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-5" style={{ background: "#F7F8FF" }}>
+        <div className="text-center max-w-sm">
+          <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6"
+            style={{ background: "linear-gradient(135deg, #FEF3C7, #FDE68A)" }}>
+            <span className="text-4xl">⏳</span>
+          </div>
+          <h2 className="text-2xl font-black mb-3" style={{ color: "#0F172A" }}>Intent already active</h2>
+          <p className="mb-6 leading-relaxed" style={{ color: "#64748B" }}>
+            You have an unmatched savings intent waiting. Cancel it to submit a new one.
+          </p>
+          {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
+          <button
+            onClick={cancelExistingIntent}
+            disabled={cancelling}
+            className="w-full py-3 rounded-xl font-semibold text-white"
+            style={{ background: cancelling ? "#94A3B8" : "#EF4444" }}
+          >
+            {cancelling ? "Cancelling..." : "Cancel Existing Intent"}
+          </button>
+          <button
+            onClick={() => router.push("/dashboard")}
+            className="w-full py-3 rounded-xl font-semibold mt-3"
+            style={{ background: "#F1F5F9", color: "#64748B" }}
+          >
+            Back to Dashboard
+          </button>
         </div>
       </div>
     );

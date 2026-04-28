@@ -190,6 +190,24 @@ impl AjoFi {
         count
     }
 
+    pub fn cancel_intent(env: Env, caller: Address) {
+        caller.require_auth();
+        if !env.storage().persistent().has(&DataKey::WalletIntent(caller.clone())) {
+            panic!("no intent found");
+        }
+        let intent_id: u64 = env.storage().persistent()
+            .get(&DataKey::WalletIntent(caller.clone()))
+            .unwrap();
+        let intent: Intent = env.storage().persistent()
+            .get(&DataKey::Intent(intent_id))
+            .unwrap();
+        if intent.matched {
+            panic!("intent already matched — cannot cancel");
+        }
+        env.storage().persistent().remove(&DataKey::Intent(intent_id));
+        env.storage().persistent().remove(&DataKey::WalletIntent(caller.clone()));
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Group Creation (agent only)
     // ─────────────────────────────────────────────────────────────────────────
@@ -405,11 +423,14 @@ impl AjoFi {
 
         let usdc: Address = env.storage().instance().get(&DataKey::UsdcToken).unwrap();
         let token_client = token::Client::new(&env, &usdc);
-        token_client.transfer(&env.current_contract_address(), &winner, &payout);
+        // Cap at actual balance to absorb any Blend rounding loss on withdrawal
+        let balance = token_client.balance(&env.current_contract_address());
+        let actual_payout = payout.min(balance);
+        token_client.transfer(&env.current_contract_address(), &winner, &actual_payout);
 
         env.events().publish(
             (symbol_short!("PAYOUT"), group_id),
-            (round_just_completed, winner.clone(), payout),
+            (round_just_completed, winner.clone(), actual_payout),
         );
 
         if round_just_completed == group.total_members {
