@@ -22,8 +22,9 @@ UNMATCHED INTENTS ON-CHAIN:
 ${JSON.stringify(intents, null, 2)}
 
 MATCHING RULES:
-- Members in the same group must have identical contributionAmount and roundDuration
+- Members in the same group must have compatible contributionAmount (within 1% of each other is acceptable — small differences arise from currency conversion rounding) and identical roundDuration
 - Group size must exactly match desiredGroupSize for every member in the group
+- When amounts are within 1% of each other, use the lower amount as the group's contributionAmount
 - One person can only be in one group at a time
 - A wallet can only appear in one group per matchmaking round
 - If no valid complete groups can be formed, return empty array
